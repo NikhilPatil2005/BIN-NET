@@ -5,6 +5,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.binnet.app.login.screens.PinSetupScreen
+import com.binnet.app.ui.screens.BalanceDetailScreen
 import com.binnet.app.ui.screens.DashboardScreen
 
 /**
@@ -30,6 +31,36 @@ fun BINNETNavigation() {
         }
 
         composable(Screen.Dashboard.route) {
+            DashboardScreen(
+                onCheckBalanceClick = {
+                    navController.navigate(Screen.BalanceDetail.route)
+                }
+            )
+        }
+
+        composable(Screen.BalanceDetail.route) {
+            BalanceDetailScreen(
+                onBackClick = {
+                    navController.popBackStack()
+                },
+                onSeeAllTransactionsClick = {
+                    navController.navigate(Screen.History.route)
+                }
+            )
+        }
+
+        composable(Screen.History.route) {
+            // TODO: Add HistoryScreen
+            DashboardScreen()
+        }
+
+        composable(Screen.Payment.route) {
+            // TODO: Add PaymentScreen
+            DashboardScreen()
+        }
+
+        composable(Screen.QRCode.route) {
+            // TODO: Add QRCodeScreen
             DashboardScreen()
         }
     }
@@ -41,6 +72,7 @@ fun BINNETNavigation() {
 sealed class Screen(val route: String) {
     data object Login : Screen("login")
     data object Dashboard : Screen("dashboard")
+    data object BalanceDetail : Screen("balance_detail")
     data object Payment : Screen("payment")
     data object History : Screen("history")
     data object QRCode : Screen("qrcode")

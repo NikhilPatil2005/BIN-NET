@@ -2,15 +2,32 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Permissions for SIM card detection -->
+    <!-- Core Permissions -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    
+    <!-- Contact Permissions -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    
+    <!-- Camera Permission for QR Scanning -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    
+    <!-- USSD Transactions -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    
+    <!-- SMS for Offline Transaction Alerts -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
 
     <!-- Feature declarations -->
     <uses-feature
         android:name="android.hardware.telephony"
         android:required="true" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
 
     <application
         android:name=".BINNETApplication"
