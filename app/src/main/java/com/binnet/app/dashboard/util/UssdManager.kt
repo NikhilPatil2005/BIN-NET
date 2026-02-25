@@ -8,55 +8,66 @@ import java.util.Random
 /**
  * UssdManager - Handles USSD requests for balance checks
  * 
+ * Dynamic USSD String Construction:
+ * Format: *99*[BankCode]*1#
+ * Example: SBI = *99*41*1#, HDFC = *99*43*1#
+ * 
  * Note: The TelephonyManager.sendUssdRequest() API requires specific carrier support
  * and may not work on all devices. This implementation provides a fallback
  * for demonstration purposes.
- * 
- * For production, consider using:
- * 1. USSD gateway services
- * 2. Bank-specific APIs
- * 3. Alternative methods like SMS-based balance inquiry
  */
 class UssdManager(private val context: Context) {
 
     companion object {
         private const val TAG = "UssdManager"
         
-        // Balance check USSD codes for Indian banks
+        // Generic balance check USSD code (fallback)
         const val USSD_BALANCE_CODE = "*99*3#"
-        const val USSD_BALANCE_CODE_HDFC = "*99*2*1*1#"
-        const val USSD_BALANCE_CODE_ICICI = "*99*2*2*1#"
-        const val USSD_BALANCE_CODE_SBI = "*99*2*3*1#"
+        
+        // Indian Bank NUUP codes (2-digit)
+        const val BANK_CODE_SBI = "41"
+        const val BANK_CODE_HDFC = "43"
+        const val BANK_CODE_ICICI = "42"
+        const val BANK_CODE_AXIS = "45"
+        const val BANK_CODE_PNB = "42"
+        const val BANK_CODE_BOB = "46"
+        const val BANK_CODE_CANARA = "47"
+        const val BANK_CODE_UNION = "48"
+        const val BANK_CODE_IDBI = "49"
+        const val BANK_CODE_BOI = "50"
     }
 
-    /**
-     * Callback interface for USSD response
-     */
     interface UssdCallback {
         fun onSuccess(response: String)
         fun onError(error: String)
     }
 
     /**
-     * Execute USSD request
-     * 
-     * Note: Direct USSD via TelephonyManager requires:
-     * - Android 8.0+ (API 26+)
-     * - Carrier support for USSD over IMS
-     * - READ_PHONE_STATE permission
-     * 
-     * This implementation provides a simulated response for demonstration
-     * since the actual USSD API is not universally supported.
+     * Build dynamic USSD string for balance check
+     * Format: *99*[BankCode]*1#
      */
-    fun executeUssd(ussdCode: String, callback: UssdCallback) {
+    fun buildUssdString(bankCode: String): String {
+        return "*99*$bankCode*1#"
+    }
+
+    /**
+     * Execute USSD request with dynamic bank code
+     */
+    fun executeUssdForBank(bankCode: String, callback: UssdCallback) {
+        val ussdCode = buildUssdString(bankCode)
+        executeUssdWithCode(ussdCode, callback)
+    }
+
+    /**
+     * Execute USSD request with explicit USSD code
+     */
+    fun executeUssdWithCode(ussdCode: String, callback: UssdCallback) {
         try {
             Log.d(TAG, "Executing USSD: $ussdCode")
             
-            // Check if we can use the direct USSD API
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isUssdSupported()) {
                 executeUssdDirect(ussdCode, callback)
             } else {
-                // Use simulated response for unsupported scenarios
                 executeUssdSimulated(ussdCode, callback)
             }
         } catch (e: Exception) {
@@ -65,68 +76,45 @@ class UssdManager(private val context: Context) {
         }
     }
 
-    /**
-     * Check if USSD is supported on this device
-     */
     private fun isUssdSupported(): Boolean {
-        // USSD over IMS support varies by carrier
-        // For reliability, we'll use simulated responses
         return false
     }
 
-    /**
-     * Direct USSD execution attempt (may not work on all devices)
-     */
-    @Suppress("DEPRECATION")
     private fun executeUssdDirect(ussdCode: String, callback: UssdCallback) {
-        // Even with API 26+, USSD support depends on carrier
-        // Fall back to simulated
         executeUssdSimulated(ussdCode, callback)
     }
 
-    /**
-     * Simulated USSD response for demonstration
-     * In production, this would be replaced with actual API calls
-     */
     private fun executeUssdSimulated(ussdCode: String, callback: UssdCallback) {
-        try {
-            // Simulate network delay
-            Thread.sleep(1500)
-            
-            // Generate a realistic-looking balance response
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             val balance = generateRandomBalance()
-            val response = buildSimulatedResponse(balance)
-            
-            Log.d(TAG, "Simulated USSD Response: $response")
+            val response = buildSimulatedResponse(balance, ussdCode)
             callback.onSuccess(response)
-        } catch (e: Exception) {
-            callback.onError("USSD request failed: ${e.message}")
-        }
+        }, 2000)
     }
 
-    /**
-     * Generate a random balance for demonstration
-     */
     private fun generateRandomBalance(): Double {
         val random = Random()
-        // Generate balance between 1000 and 50000
         return (random.nextInt(49000) + 1000) + 0.50
     }
 
-    /**
-     * Build a simulated bank response
-     */
-    private fun buildSimulatedResponse(balance: Double): String {
+    private fun buildSimulatedResponse(balance: Double, ussdCode: String): String {
+        val bankName = getBankNameFromCode(ussdCode)
+        val accountLast4 = generateAccountLast4()
+        
         return """
-            Account Balance: Rs. ${String.format("%,.2f", balance)}
+            $bankName
+            Account: $accountLast4
+            Balance: Rs. ${String.format("%,.2f", balance)}
             Available Balance: Rs. ${String.format("%,.2f", balance)}
             Last Transaction: Rs. 500.00 on 15/01/2024
         """.trimIndent()
     }
 
-    /**
-     * Extract balance amount from USSD response string
-     */
+    private fun generateAccountLast4(): String {
+        val random = Random()
+        return String.format("%04d", random.nextInt(10000))
+    }
+
     fun extractBalance(response: String): String? {
         val patterns = listOf(
             Regex("""Rs\.?\s*([\d,]+\.?\d*)""", RegexOption.IGNORE_CASE),
@@ -145,9 +133,22 @@ class UssdManager(private val context: Context) {
         return null
     }
 
-    /**
-     * Get bank name from USSD response
-     */
+    fun extractAccountLast4(response: String): String? {
+        val patterns = listOf(
+            Regex("""Account[:\s]*[X\*]*(\d{4})""", RegexOption.IGNORE_CASE),
+            Regex("""A/c[:\s]*(\d{4})""", RegexOption.IGNORE_CASE),
+            Regex("""(\d{4})""")
+        )
+
+        for (pattern in patterns) {
+            val match = pattern.find(response)
+            if (match != null && match.groupValues[1].length == 4) {
+                return match.groupValues[1]
+            }
+        }
+        return null
+    }
+
     fun extractBankName(response: String): String {
         val bankPatterns = listOf(
             "HDFC Bank" to Regex("""HDFC""", RegexOption.IGNORE_CASE),
@@ -165,22 +166,22 @@ class UssdManager(private val context: Context) {
         return "Unknown Bank"
     }
 
-    /**
-     * Get bank name from USSD code
-     */
     fun getBankNameFromCode(ussdCode: String): String {
         return when {
-            ussdCode.contains("1") -> "HDFC Bank"
-            ussdCode.contains("2") -> "ICICI Bank"
-            ussdCode.contains("3") -> "State Bank of India"
-            ussdCode.contains("4") -> "Axis Bank"
+            ussdCode.contains(BANK_CODE_SBI) -> "State Bank of India"
+            ussdCode.contains(BANK_CODE_HDFC) -> "HDFC Bank"
+            ussdCode.contains(BANK_CODE_ICICI) -> "ICICI Bank"
+            ussdCode.contains(BANK_CODE_AXIS) -> "Axis Bank"
+            ussdCode.contains(BANK_CODE_PNB) -> "Punjab National Bank"
+            ussdCode.contains(BANK_CODE_BOB) -> "Bank of Baroda"
+            ussdCode.contains(BANK_CODE_CANARA) -> "Canara Bank"
+            ussdCode.contains(BANK_CODE_UNION) -> "Union Bank of India"
+            ussdCode.contains(BANK_CODE_IDBI) -> "IDBI Bank"
+            ussdCode.contains(BANK_CODE_BOI) -> "Bank of India"
             else -> "Unknown Bank"
         }
     }
 
-    /**
-     * Cancel ongoing USSD request
-     */
     fun cancelUssd() {
         Log.d(TAG, "USSD request cancelled")
     }

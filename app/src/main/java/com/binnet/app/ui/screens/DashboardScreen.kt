@@ -93,7 +93,8 @@ fun DashboardScreen(
     onCheckCibilClick: () -> Unit = {},
     onTransactionHistoryClick: () -> Unit = {},
     onPayToContact: (Contact) -> Unit = {},
-    onCheckBalanceClick: () -> Unit = {}
+    onCheckBalanceClick: () -> Unit = {},
+    onLinkBankClick: () -> Unit = {}
 ) {
     val searchQuery by viewModel.searchQuery.collectAsState()
     val searchResults by viewModel.searchResults.collectAsState()

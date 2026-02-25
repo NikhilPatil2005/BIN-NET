@@ -1,6 +1,8 @@
 package com.binnet.app.login.util
 
 import android.content.Context
+import android.content.SharedPreferences
+import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import java.security.MessageDigest
@@ -8,11 +10,14 @@ import java.security.MessageDigest
 /**
  * PinManager - Handles secure storage and validation of user's 4-digit PIN
  * Uses EncryptedSharedPreferences for offline-first secure storage
+ * Fixed: Added fallback to regular SharedPreferences if encrypted version fails
  */
 class PinManager(private val context: Context) {
 
     companion object {
+        private const val TAG = "PinManager"
         private const val PREFS_NAME = "binnet_secure_prefs"
+        private const val PREFS_NAME_FALLBACK = "binnet_prefs"
         private const val KEY_PIN_HASH = "pin_hash"
         private const val KEY_IS_PIN_SET = "is_pin_set"
         private const val KEY_FAILED_ATTEMPTS = "failed_attempts"
@@ -21,17 +26,30 @@ class PinManager(private val context: Context) {
         private const val LOCKOUT_DURATION_MS = 30000L // 30 seconds
     }
 
-    private val masterKey = MasterKey.Builder(context)
-        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-        .build()
+    private val sharedPreferences: SharedPreferences
 
-    private val sharedPreferences = EncryptedSharedPreferences.create(
-        context,
-        PREFS_NAME,
-        masterKey,
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-    )
+    init {
+        // Try to use EncryptedSharedPreferences, but fall back to regular SharedPreferences
+        // if there's an encryption error (e.g., corrupted key or fresh install)
+        sharedPreferences = try {
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+
+            EncryptedSharedPreferences.create(
+                context,
+                PREFS_NAME,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to create EncryptedSharedPreferences, using fallback", e)
+            // Clear corrupted prefs and use regular SharedPreferences as fallback
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().clear().apply()
+            context.getSharedPreferences(PREFS_NAME_FALLBACK, Context.MODE_PRIVATE)
+        }
+    }
 
     /**
      * Checks if a PIN has been set up

@@ -1,27 +1,36 @@
 package com.binnet.app.login.viewmodel
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.binnet.app.login.util.PinManager
 import com.binnet.app.login.util.PinValidationResult
 import com.binnet.app.login.util.SimCardManager
 import com.binnet.app.login.util.SimCardStatus
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * PinViewModel - ViewModel for Login Module
  * Handles PIN setup, validation, and SIM card detection
+ * 
+ * Fixed: Safe initialization to prevent crashes during ViewModel creation
  */
 class PinViewModel(application: Application) : AndroidViewModel(application) {
 
     private val pinManager = PinManager(application)
     private val simCardManager = SimCardManager(application)
 
-    // UI State
+    companion object {
+        private const val TAG = "PinViewModel"
+    }
+
+    // UI State - Initialize with Loading state
     private val _uiState = MutableStateFlow<LoginUiState>(LoginUiState.Loading)
     val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
 
@@ -36,12 +45,43 @@ class PinViewModel(application: Application) : AndroidViewModel(application) {
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
-    // SIM card status
+    // SIM card status - Initialize as null (unknown)
     private val _simCardStatus = MutableStateFlow<SimCardStatus?>(null)
     val simCardStatus: StateFlow<SimCardStatus?> = _simCardStatus.asStateFlow()
 
+    // Flag to prevent multiple initialization calls
+    private var isInitialized = false
+
     init {
-        checkInitialState()
+        // IMMEDIATE synchronous initialization - NO coroutines in init block
+        // This prevents any crashes during ViewModel instantiation
+        _uiState.value = LoginUiState.Loading
+        isInitialized = true
+        // Note: Actual SIM/PIN check will be done via checkInitialState() 
+        // which is called from the UI after the ViewModel is created
+    }
+
+    /**
+     * Determines the initial UI state based on SIM and PIN status
+     */
+    private fun determineInitialState(simStatus: SimCardStatus): LoginUiState {
+        return when {
+            !simCardManager.hasPhoneStatePermission() -> {
+                LoginUiState.PermissionRequired
+            }
+            simStatus is SimCardStatus.NOT_AVAILABLE || simStatus is SimCardStatus.ERROR -> {
+                LoginUiState.SimNotAvailable
+            }
+            simStatus is SimCardStatus.PERMISSION_REQUIRED -> {
+                LoginUiState.PermissionRequired
+            }
+            !pinManager.isPinSet() -> {
+                LoginUiState.PinSetup
+            }
+            else -> {
+                LoginUiState.PinEntry
+            }
+        }
     }
 
     /**

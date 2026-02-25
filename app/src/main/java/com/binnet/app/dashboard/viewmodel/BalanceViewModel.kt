@@ -2,11 +2,13 @@ package com.binnet.app.dashboard.viewmodel
 
 import android.app.Application
 import android.content.Context
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.binnet.app.data.local.BinnetDatabase
 import com.binnet.app.data.local.entity.TransactionEntity
 import com.binnet.app.dashboard.util.UssdManager
+import com.binnet.app.login.util.BankPreferencesManager
 import com.binnet.app.login.util.PinManager
 import com.binnet.app.login.util.PinValidationResult
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -14,135 +16,153 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-/**
- * BalanceViewModel - ViewModel for Balance Check flow
- * Handles:
- * - PIN verification before balance check
- * - Background USSD execution
- * - Balance extraction from response
- * - Transaction history for the bank
- */
 class BalanceViewModel(application: Application) : AndroidViewModel(application) {
 
     private val context: Context = application.applicationContext
     
-    // Managers
     private val pinManager = PinManager(context)
+    private val bankPreferencesManager = BankPreferencesManager(context)
     private val ussdManager = UssdManager(context)
     private val database = BinnetDatabase.getDatabase(context)
     private val transactionDao = database.transactionDao()
 
-    // Balance state
     private val _balanceState = MutableStateFlow<BalanceState>(BalanceState.Idle)
     val balanceState: StateFlow<BalanceState> = _balanceState.asStateFlow()
 
-    // PIN verification state
-    private val _pinVerificationState = MutableStateFlow<PinVerificationState>(PinVerificationState.Idle)
-    val pinVerificationState: StateFlow<PinVerificationState> = _pinVerificationState.asStateFlow()
+    private val _pinVerificationState = MutableStateFlow<PinVerificationStatus>(PinVerificationStatus.Idle)
+    val pinVerificationState: StateFlow<PinVerificationStatus> = _pinVerificationState.asStateFlow()
 
-    // Current bank info (placeholder for multi-bank support)
     private val _currentBank = MutableStateFlow<BankInfo?>(null)
     val currentBank: StateFlow<BankInfo?> = _currentBank.asStateFlow()
 
-    // Recent transactions for current bank
     private val _recentTransactions = MutableStateFlow<List<TransactionEntity>>(emptyList())
     val recentTransactions: StateFlow<List<TransactionEntity>> = _recentTransactions.asStateFlow()
 
-    // Balance data
     private val _balanceData = MutableStateFlow<BalanceData?>(null)
     val balanceData: StateFlow<BalanceData?> = _balanceData.asStateFlow()
 
     init {
-        // Set default bank info (placeholder)
-        _currentBank.value = BankInfo(
-            name = "HDFC Bank",
-            accountLast4 = "1234",
-            upiId = "hdfc@upi"
-        )
+        loadBankInfo()
     }
 
-    /**
-     * Verify the user's PIN before allowing balance check
-     */
+    private fun loadBankInfo() {
+        val bankName = bankPreferencesManager.getSelectedBankName()
+        val accountLast4 = bankPreferencesManager.getAccountLast4() ?: "****"
+        
+        if (bankName != null) {
+            _currentBank.value = BankInfo(
+                name = bankName,
+                accountLast4 = accountLast4,
+                upiId = "${bankName.lowercase().replace(" ", "")}@upi"
+            )
+        } else {
+            _currentBank.value = BankInfo(
+                name = "HDFC Bank",
+                accountLast4 = "1234",
+                upiId = "hdfc@upi"
+            )
+        }
+    }
+
     fun verifyPin(pin: String) {
         viewModelScope.launch {
-            _pinVerificationState.value = PinVerificationState.Verifying
+            _pinVerificationState.value = PinVerificationStatus.Verifying
             
             when (val result = pinManager.validatePin(pin)) {
                 is PinValidationResult.SUCCESS -> {
-                    _pinVerificationState.value = PinVerificationState.Success
-                    // Proceed to check balance
+                    _pinVerificationState.value = PinVerificationStatus.Success
                     checkBalance()
                 }
                 is PinValidationResult.INVALID_PIN -> {
-                    _pinVerificationState.value = PinVerificationState.InvalidPin(result.remainingAttempts)
+                    _pinVerificationState.value = PinVerificationStatus.InvalidPin(result.remainingAttempts)
                 }
                 is PinValidationResult.LOCKED_OUT -> {
-                    val secondsRemaining = result.remainingTimeMs / 1000
-                    _pinVerificationState.value = PinVerificationState.LockedOut(secondsRemaining.toInt())
+                    _pinVerificationState.value = PinVerificationStatus.LockedOut(
+                        (result.remainingTimeMs / 1000).toInt()
+                    )
                 }
                 is PinValidationResult.NO_PIN_SET -> {
-                    _pinVerificationState.value = PinVerificationState.NoPinSet
+                    _pinVerificationState.value = PinVerificationStatus.NoPinSet
                 }
             }
         }
     }
 
-    /**
-     * Reset PIN verification state
-     */
     fun resetPinVerification() {
-        _pinVerificationState.value = PinVerificationState.Idle
+        _pinVerificationState.value = PinVerificationStatus.Idle
     }
 
-    /**
-     * Execute USSD balance check in the background
-     */
     fun checkBalance() {
         viewModelScope.launch {
             _balanceState.value = BalanceState.Loading
             
-            ussdManager.executeUssd(UssdManager.USSD_BALANCE_CODE, object : UssdManager.UssdCallback {
-                override fun onSuccess(response: String) {
-                    processBalanceResponse(response)
+            try {
+                val bankCode = bankPreferencesManager.getBankUssdCode()
+                
+                if (bankCode == null) {
+                    _balanceState.value = BalanceState.Error("No bank linked. Please link your bank account first.")
+                    return@launch
                 }
 
-                override fun onError(error: String) {
-                    _balanceState.value = BalanceState.Error(error)
-                }
-            })
+                val ussdCode = ussdManager.buildUssdString(bankCode)
+                Log.d(TAG, "Executing USSD with bank code: $bankCode, USSD: $ussdCode")
+                
+                ussdManager.executeUssdForBank(bankCode, object : UssdManager.UssdCallback {
+                    override fun onSuccess(response: String) {
+                        processUssdResponse(response, bankCode)
+                    }
+                    
+                    override fun onError(error: String) {
+                        _balanceState.value = BalanceState.Error(error)
+                    }
+                })
+            } catch (e: Exception) {
+                _balanceState.value = BalanceState.Error("Failed to check balance: ${e.message}")
+            }
         }
     }
 
-    /**
-     * Process the USSD response and extract balance
-     */
-    private fun processBalanceResponse(response: String) {
+    private fun processUssdResponse(response: String, bankCode: String) {
         viewModelScope.launch {
             val extractedBalance = ussdManager.extractBalance(response)
-            val bankName = ussdManager.extractBankName(response)
-            
+            val bankName = bankPreferencesManager.getSelectedBankName() 
+                ?: ussdManager.getBankNameFromCode(bankCode)
+            val accountLast4 = ussdManager.extractAccountLast4(response) 
+                ?: bankPreferencesManager.getAccountLast4() 
+                ?: "****"
+
             if (extractedBalance != null) {
+                if (bankPreferencesManager.getAccountLast4() == null && accountLast4 != "****") {
+                    bankPreferencesManager.saveBankSelection(
+                        bankName = bankName,
+                        bankUssdCode = bankCode,
+                        registeredSimId = bankPreferencesManager.getRegisteredSimId() ?: "",
+                        accountLast4 = accountLast4
+                    )
+                }
+
+                _currentBank.value = BankInfo(
+                    name = bankName,
+                    accountLast4 = accountLast4,
+                    upiId = "${bankName.lowercase().replace(" ", "")}@upi"
+                )
+
                 _balanceData.value = BalanceData(
                     balance = extractedBalance,
                     bankName = bankName,
+                    accountLast4 = accountLast4,
                     lastUpdated = System.currentTimeMillis(),
                     rawResponse = response
                 )
                 _balanceState.value = BalanceState.Success(extractedBalance)
                 
-                // Load recent transactions for this bank
                 loadRecentTransactions()
             } else {
-                // Try to parse response even if extraction failed
                 _balanceState.value = BalanceState.Success("₹0.00")
             }
         }
     }
 
-    /**
-     * Load recent transactions for display
-     */
     private fun loadRecentTransactions() {
         viewModelScope.launch {
             try {
@@ -155,26 +175,21 @@ class BalanceViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    /**
-     * Refresh balance
-     */
     fun refreshBalance() {
         checkBalance()
     }
 
-    /**
-     * Clear balance data (when leaving screen)
-     */
     fun clearBalance() {
         _balanceState.value = BalanceState.Idle
         _balanceData.value = null
-        _pinVerificationState.value = PinVerificationState.Idle
+        _pinVerificationState.value = PinVerificationStatus.Idle
+    }
+
+    companion object {
+        private const val TAG = "BalanceViewModel"
     }
 }
 
-/**
- * Balance state sealed class
- */
 sealed class BalanceState {
     data object Idle : BalanceState()
     data object Loading : BalanceState()
@@ -182,33 +197,25 @@ sealed class BalanceState {
     data class Error(val message: String) : BalanceState()
 }
 
-/**
- * PIN verification state sealed class
- */
-sealed class PinVerificationState {
-    data object Idle : PinVerificationState()
-    data object Verifying : PinVerificationState()
-    data object Success : PinVerificationState()
-    data class InvalidPin(val remainingAttempts: Int) : PinVerificationState()
-    data class LockedOut(val secondsRemaining: Int) : PinVerificationState()
-    data object NoPinSet : PinVerificationState()
+sealed class PinVerificationStatus {
+    data object Idle : PinVerificationStatus()
+    data object Verifying : PinVerificationStatus()
+    data object Success : PinVerificationStatus()
+    data class InvalidPin(val remainingAttempts: Int) : PinVerificationStatus()
+    data class LockedOut(val secondsRemaining: Int) : PinVerificationStatus()
+    data object NoPinSet : PinVerificationStatus()
 }
 
-/**
- * Bank information data class
- */
 data class BankInfo(
     val name: String,
     val accountLast4: String,
     val upiId: String
 )
 
-/**
- * Balance data class
- */
 data class BalanceData(
     val balance: String,
     val bankName: String,
+    val accountLast4: String = "",
     val lastUpdated: Long,
     val rawResponse: String = ""
 )
