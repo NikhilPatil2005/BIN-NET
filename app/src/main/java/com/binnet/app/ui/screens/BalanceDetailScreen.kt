@@ -1,9 +1,16 @@
 package com.binnet.app.ui.screens
 
+import android.Manifest
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,11 +29,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Savings
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
@@ -49,15 +61,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -70,6 +83,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.binnet.app.dashboard.viewmodel.BalanceState
 import com.binnet.app.dashboard.viewmodel.BalanceViewModel
 import com.binnet.app.dashboard.viewmodel.BankInfo
+import com.binnet.app.dashboard.viewmodel.OtpState
+import com.binnet.app.dashboard.viewmodel.PermissionStatus
 import com.binnet.app.dashboard.viewmodel.PinVerificationStatus
 import com.binnet.app.data.local.entity.TransactionEntity
 import java.text.SimpleDateFormat
@@ -86,32 +101,81 @@ fun BalanceDetailScreen(
 ) {
     val balanceState by viewModel.balanceState.collectAsState()
     val pinVerificationState by viewModel.pinVerificationState.collectAsState()
+    val otpState by viewModel.otpVerificationState.collectAsState()
     val currentBank by viewModel.currentBank.collectAsState()
     val balanceData by viewModel.balanceData.collectAsState()
     val recentTransactions by viewModel.recentTransactions.collectAsState()
+    val isCommunicating by viewModel.isCommunicating.collectAsState()
+    val permissionStatus by viewModel.permissionStatus.collectAsState()
+    val mobileNumber by viewModel.mobileNumber.collectAsState()
+
+    val context = LocalContext.current
 
     var showPinSheet by remember { mutableStateOf(false) }
     var enteredPin by remember { mutableStateOf("") }
     var showPin by remember { mutableStateOf(false) }
+    var showOtpSheet by remember { mutableStateOf(false) }
+    var enteredOtp by remember { mutableStateOf("") }
+    var currentStep by remember { mutableIntStateOf(0) } // 0 = PIN, 1 = Mobile OTP, 2 = Bank OTP
+
+    // Permission launcher
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        viewModel.checkPermissions()
+    }
 
     // Use rememberCoroutineScope for sheet state to prevent crashes
-    val coroutineScope = rememberCoroutineScope()
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val pinSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val otpSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     // Navigate to success screen after balance check succeeds
     LaunchedEffect(balanceState) {
         if (balanceState is BalanceState.Success) {
-            // Small delay to show the balance first
             kotlinx.coroutines.delay(500)
             onBalanceSuccess()
         }
     }
 
+    // Handle PIN success
     LaunchedEffect(pinVerificationState) {
         if (pinVerificationState is PinVerificationStatus.Success) {
             showPinSheet = false
             enteredPin = ""
             viewModel.resetPinVerification()
+            
+            // Check if OTP is needed
+            when (val otp = otpState) {
+                is OtpState.VerificationRequired -> {
+                    showOtpSheet = true
+                    currentStep = 1 // Start with mobile OTP
+                }
+                is OtpState.Verified -> {
+                    // Already verified, balance check will proceed automatically
+                }
+                else -> {
+                    showOtpSheet = true
+                    currentStep = 1
+                }
+            }
+        }
+    }
+
+    // Handle OTP state changes
+    LaunchedEffect(otpState) {
+        when (otpState) {
+            is OtpState.Verified -> {
+                showOtpSheet = false
+                enteredOtp = ""
+                viewModel.resetOtpVerification()
+            }
+            is OtpState.Error -> {
+                // Stay on OTP sheet, show error
+            }
+            is OtpState.InvalidOtp -> {
+                // Stay on OTP sheet, show error
+            }
+            else -> {}
         }
     }
 
@@ -144,8 +208,32 @@ fun BalanceDetailScreen(
                 Spacer(modifier = Modifier.height(24.dp))
             }
 
+            // Show permission card if needed
+            if (permissionStatus !is PermissionStatus.Granted) {
+                item {
+                    PermissionRequiredCard(
+                        permissionStatus = permissionStatus,
+                        onRequestPermissions = {
+                            val permissions = viewModel.getMissingPermissions()
+                            permissionLauncher.launch(permissions.toTypedArray())
+                        },
+                        onOpenSettings = {
+                            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                data = Uri.fromParts("package", context.packageName, null)
+                            }
+                            context.startActivity(intent)
+                        }
+                    )
+                    Spacer(modifier = Modifier.height(24.dp))
+                }
+            }
+
+            // Bank Account Details Card - Always visible
             item {
-                BankInfoCard(bankInfo = currentBank)
+                BankAccountDetailsCard(
+                    bankInfo = currentBank,
+                    balanceData = balanceData
+                )
                 Spacer(modifier = Modifier.height(24.dp))
             }
 
@@ -167,9 +255,22 @@ fun BalanceDetailScreen(
                     enter = fadeIn(),
                     exit = fadeOut()
                 ) {
-                    ViewBalanceButton(
-                        onClick = { showPinSheet = true }
-                    )
+                    Column {
+                        ViewBalanceButton(
+                            onClick = { showPinSheet = true }
+                        )
+                        
+                        if (permissionStatus !is PermissionStatus.Granted) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Grant permissions to check balance",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.Red,
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
                 }
                 Spacer(modifier = Modifier.height(24.dp))
             }
@@ -183,9 +284,21 @@ fun BalanceDetailScreen(
         }
 
         if (balanceState is BalanceState.Error) {
+            val errorMessage = (balanceState as BalanceState.Error).message
+            val isPermissionError = errorMessage.contains("permission", ignoreCase = true)
+            
             ErrorCard(
-                message = (balanceState as BalanceState.Error).message,
-                onRetry = { showPinSheet = true },
+                message = errorMessage,
+                onRetry = { 
+                    if (isPermissionError) {
+                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = Uri.fromParts("package", context.packageName, null)
+                        }
+                        context.startActivity(intent)
+                    } else {
+                        showPinSheet = true
+                    }
+                },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(16.dp)
@@ -193,6 +306,7 @@ fun BalanceDetailScreen(
         }
     }
 
+    // PIN Verification Sheet
     if (showPinSheet) {
         ModalBottomSheet(
             onDismissRequest = { 
@@ -200,7 +314,7 @@ fun BalanceDetailScreen(
                 enteredPin = ""
                 viewModel.resetPinVerification()
             },
-            sheetState = sheetState
+            sheetState = pinSheetState
         ) {
             PinVerificationContent(
                 pinVerificationState = pinVerificationState,
@@ -217,49 +331,242 @@ fun BalanceDetailScreen(
             )
         }
     }
+
+    // OTP Verification Sheet
+    if (showOtpSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { 
+                showOtpSheet = false
+                enteredOtp = ""
+                viewModel.resetOtpVerification()
+            },
+            sheetState = otpSheetState
+        ) {
+            OtpVerificationContent(
+                otpState = otpState,
+                currentStep = currentStep,
+                mobileNumber = mobileNumber,
+                onRequestMobileOtp = { viewModel.requestMobileOtp() },
+                onRequestBankOtp = { viewModel.requestBankOtp() },
+                enteredOtp = enteredOtp,
+                onOtpChange = { enteredOtp = it },
+                onVerifyOtp = { viewModel.verifyOtp(enteredOtp) },
+                onSkip = { viewModel.skipOtpVerification() },
+                onDismiss = { 
+                    showOtpSheet = false
+                    enteredOtp = ""
+                    viewModel.resetOtpVerification()
+                },
+                onStepChange = { currentStep = it }
+            )
+        }
+    }
 }
 
+/**
+ * Bank Account Details Card - Shows bank info and account details
+ */
 @Composable
-private fun BankInfoCard(bankInfo: BankInfo?) {
+private fun BankAccountDetailsCard(
+    bankInfo: BankInfo?,
+    balanceData: com.binnet.app.dashboard.viewmodel.BalanceData?
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
-        Row(
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp)
+        ) {
+            // Header
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AccountBalance,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = bankInfo?.name ?: "Loading...",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                        text = "Bank Account",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                    )
+                }
+                if (balanceData != null) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = "Verified",
+                        tint = Color(0xFF4CAF50),
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            Divider(color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f))
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // Account Details
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                DetailItem(
+                    icon = Icons.Default.CreditCard,
+                    label = "Account Number",
+                    value = "XXXX XXXX XXXX ${bankInfo?.accountLast4 ?: "****"}"
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                DetailItem(
+                    icon = Icons.Default.AccountBalanceWallet,
+                    label = "UPI ID",
+                    value = bankInfo?.upiId ?: "Not available"
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                DetailItem(
+                    icon = Icons.Default.Security,
+                    label = "Status",
+                    value = if (balanceData != null) "Verified & Active" else "Pending Verification",
+                    valueColor = if (balanceData != null) Color(0xFF4CAF50) else Color(0xFFFF9800)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailItem(
+    icon: ImageVector,
+    label: String,
+    value: String,
+    valueColor: Color = MaterialTheme.colorScheme.onPrimaryContainer
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Column {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = valueColor
+            )
+        }
+    }
+}
+
+@Composable
+private fun PermissionRequiredCard(
+    permissionStatus: PermissionStatus,
+    onRequestPermissions: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(20.dp),
-            verticalAlignment = Alignment.CenterVertically
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Box(
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.AccountBalance,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(32.dp)
-                )
+            Icon(
+                imageVector = Icons.Default.Security,
+                contentDescription = null,
+                tint = Color(0xFFFF9800),
+                modifier = Modifier.size(48.dp)
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            Text(
+                text = "Permissions Required",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFFE65100)
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            val message = when (permissionStatus) {
+                is PermissionStatus.MissingBoth -> "Phone State and Call permissions are required to check your bank balance."
+                is PermissionStatus.MissingPhoneState -> "Phone State permission is required to check your bank balance."
+                is PermissionStatus.MissingCallPhone -> "Call Phone permission is required to check your bank balance."
+                else -> "Permissions are required to check your bank balance."
             }
-            Spacer(modifier = Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = bankInfo?.name ?: "Loading...",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Account •••• ${bankInfo?.accountLast4 ?: "****"}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                )
+            
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color(0xFF795548),
+                textAlign = TextAlign.Center
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            Button(
+                onClick = onRequestPermissions,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF9800)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(imageVector = Icons.Default.Phone, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Grant Permissions")
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            TextButton(onClick = onOpenSettings) {
+                Text("Open Settings", color = Color(0xFF795548))
             }
         }
     }
@@ -300,7 +607,7 @@ private fun BalanceDisplayCard(
                 is BalanceState.Loading -> {
                     CircularProgressIndicator(modifier = Modifier.size(48.dp), color = MaterialTheme.colorScheme.primary)
                     Spacer(modifier = Modifier.height(16.dp))
-                    Text(text = "Fetching balance...", style = MaterialTheme.typography.bodyLarge, color = Color.Gray)
+                    Text(text = "Communicating with your Bank's server...", style = MaterialTheme.typography.bodyLarge, color = Color.Gray)
                     Text(text = "Please wait", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 }
                 is BalanceState.Success -> {
@@ -308,8 +615,8 @@ private fun BalanceDisplayCard(
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = balanceState.balance,
-                        style = MaterialTheme.typography.displayMedium.copy(fontSize = 48.sp, fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.primary
+                        style = MaterialTheme.typography.displayMedium.copy(fontSize = 50.sp, fontWeight = FontWeight.Bold),
+                        color = Color(0xFF4CAF50)
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(text = "Updated just now", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
@@ -471,6 +778,346 @@ private fun PinVerificationContent(
         Spacer(modifier = Modifier.height(12.dp))
         TextButton(onClick = onDismiss) { Text("Cancel") }
         Spacer(modifier = Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun OtpVerificationContent(
+    otpState: OtpState,
+    currentStep: Int,
+    mobileNumber: String?,
+    onRequestMobileOtp: () -> Unit,
+    onRequestBankOtp: () -> Unit,
+    enteredOtp: String,
+    onOtpChange: (String) -> Unit,
+    onVerifyOtp: () -> Unit,
+    onSkip: () -> Unit,
+    onDismiss: () -> Unit,
+    onStepChange: (Int) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        // Step indicator
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center
+        ) {
+            StepIndicator(
+                step = 1,
+                label = "Mobile",
+                isActive = currentStep == 1,
+                isCompleted = currentStep > 1
+            )
+            Spacer(modifier = Modifier.width(16.dp))
+            StepIndicator(
+                step = 2,
+                label = "Bank",
+                isActive = currentStep == 2,
+                isCompleted = currentStep > 2
+            )
+        }
+        
+        Spacer(modifier = Modifier.height(24.dp))
+
+        when (currentStep) {
+            1 -> {
+                // Mobile OTP Step
+                Text(text = "Verify Mobile Number", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                val displayNumber = mobileNumber?.let { 
+                    if (it.length > 4) "XXXXXX${it.takeLast(4)}" else it 
+                } ?: "your mobile number"
+                
+                Text(
+                    text = "OTP will be sent to $displayNumber",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.Gray,
+                    textAlign = TextAlign.Center
+                )
+                
+                Spacer(modifier = Modifier.height(24.dp))
+                
+                when (otpState) {
+                    is OtpState.SendingOtp -> {
+                        CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(text = "Sending OTP...", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+                    }
+                    is OtpState.OtpSent -> {
+                        // Show message and demo OTP
+                        Text(text = otpState.message, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF4CAF50))
+                        
+                        // Show demo OTP prominently if available
+                        otpState.demoOtp?.let { demoOtp ->
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        text = "DEMO OTP",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color(0xFF43A047)
+                                    )
+                                    Text(
+                                        text = demoOtp,
+                                        style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = Color(0xFF2E7D32),
+                                        letterSpacing = 8.sp
+                                    )
+                                    Text(
+                                        text = "Enter this OTP to verify",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFF43A047)
+                                    )
+                                }
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+                        
+                        OutlinedTextField(
+                            value = enteredOtp,
+                            onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) onOtpChange(it) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Enter 6-digit OTP") },
+                            placeholder = { Text("------") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done)
+                        )
+                        
+                        when (otpState) {
+                            is OtpState.InvalidOtp -> {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(text = otpState.message, style = MaterialTheme.typography.bodySmall, color = Color(0xFFE53935))
+                            }
+                            is OtpState.Error -> {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(text = otpState.message, style = MaterialTheme.typography.bodySmall, color = Color(0xFFE53935))
+                            }
+                            else -> {}
+                        }
+                        
+                        Spacer(modifier = Modifier.height(24.dp))
+                        
+                        Button(
+                            onClick = onVerifyOtp,
+                            modifier = Modifier.fillMaxWidth().height(50.dp),
+                            enabled = enteredOtp.length == 6 && otpState !is OtpState.Verifying,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            if (otpState is OtpState.Verifying) {
+                                CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.White, strokeWidth = 2.dp)
+                            } else {
+                                Text("Verify OTP")
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(12.dp))
+                        
+                        OutlinedButton(
+                            onClick = { 
+                                onStepChange(2)
+                                onRequestBankOtp()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("Skip & Verify Bank Instead")
+                        }
+                    }
+                    else -> {
+                        Button(
+                            onClick = onRequestMobileOtp,
+                            modifier = Modifier.fillMaxWidth().height(50.dp),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("Send OTP to Mobile")
+                        }
+                    }
+                }
+            }
+            2 -> {
+                // Bank OTP Step
+                Text(text = "Verify Bank Account", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "OTP will be sent to your bank's registered mobile number",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.Gray,
+                    textAlign = TextAlign.Center
+                )
+                
+                Spacer(modifier = Modifier.height(24.dp))
+                
+                when (otpState) {
+                    is OtpState.SendingOtp -> {
+                        CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(text = "Sending OTP...", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+                    }
+                    is OtpState.OtpSent -> {
+                        // Show message and demo OTP
+                        Text(text = otpState.message, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF4CAF50))
+                        
+                        // Show demo OTP prominently if available
+                        otpState.demoOtp?.let { demoOtp ->
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        text = "DEMO OTP",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color(0xFF43A047)
+                                    )
+                                    Text(
+                                        text = demoOtp,
+                                        style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = Color(0xFF2E7D32),
+                                        letterSpacing = 8.sp
+                                    )
+                                    Text(
+                                        text = "Enter this OTP to verify",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFF43A047)
+                                    )
+                                }
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+                        
+                        OutlinedTextField(
+                            value = enteredOtp,
+                            onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) onOtpChange(it) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Enter 6-digit OTP") },
+                            placeholder = { Text("------") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done)
+                        )
+                        
+                        when (otpState) {
+                            is OtpState.InvalidOtp -> {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(text = otpState.message, style = MaterialTheme.typography.bodySmall, color = Color(0xFFE53935))
+                            }
+                            is OtpState.Error -> {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(text = otpState.message, style = MaterialTheme.typography.bodySmall, color = Color(0xFFE53935))
+                            }
+                            else -> {}
+                        }
+                        
+                        Spacer(modifier = Modifier.height(24.dp))
+                        
+                        Button(
+                            onClick = onVerifyOtp,
+                            modifier = Modifier.fillMaxWidth().height(50.dp),
+                            enabled = enteredOtp.length == 6 && otpState !is OtpState.Verifying,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            if (otpState is OtpState.Verifying) {
+                                CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.White, strokeWidth = 2.dp)
+                            } else {
+                                Text("Verify Bank OTP")
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(12.dp))
+                        
+                        OutlinedButton(
+                            onClick = onSkip,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("Skip (Demo Mode)")
+                        }
+                    }
+                    else -> {
+                        Button(
+                            onClick = onRequestBankOtp,
+                            modifier = Modifier.fillMaxWidth().height(50.dp),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("Send OTP to Bank")
+                        }
+                    }
+                }
+            }
+        }
+        
+        Spacer(modifier = Modifier.height(12.dp))
+        TextButton(onClick = onDismiss) { Text("Cancel") }
+        Spacer(modifier = Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun StepIndicator(
+    step: Int,
+    label: String,
+    isActive: Boolean,
+    isCompleted: Boolean
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(
+                when {
+                    isCompleted -> Color(0xFF4CAF50).copy(alpha = 0.1f)
+                    isActive -> MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                    else -> Color.Gray.copy(alpha = 0.1f)
+                }
+            )
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(
+                    when {
+                        isCompleted -> Color(0xFF4CAF50)
+                        isActive -> MaterialTheme.colorScheme.primary
+                        else -> Color.Gray
+                    }
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            if (isCompleted) {
+                Icon(
+                    imageVector = Icons.Default.CheckCircle,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            } else {
+                Text(
+                    text = step.toString(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (isActive || isCompleted) MaterialTheme.colorScheme.primary else Color.Gray
+        )
     }
 }
 
