@@ -1,6 +1,8 @@
 package com.binnet.app.login.util
 
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
@@ -17,6 +19,7 @@ class OtpManager(private val context: Context) {
         private const val TAG = "OtpManager"
         private const val PREFS_NAME = "binnet_otp_prefs"
         private const val KEY_MOBILE_HASH = "mobile_hash"
+        private const val KEY_MOBILE_NUMBER = "mobile_number"
         private const val KEY_BANK_VERIFIED = "bank_verified"
         private const val KEY_MOBILE_VERIFIED = "mobile_verified"
         private const val KEY_OTP_EXPIRY = "otp_expiry"
@@ -148,6 +151,7 @@ class OtpManager(private val context: Context) {
         val hash = mobileNumber.hashCode().toString()
         sharedPreferences.edit()
             .putString(KEY_MOBILE_HASH, hash)
+            .putString(KEY_MOBILE_NUMBER, mobileNumber)
             .apply()
     }
 
@@ -156,6 +160,13 @@ class OtpManager(private val context: Context) {
      */
     fun getMobileHash(): String? {
         return sharedPreferences.getString(KEY_MOBILE_HASH, null)
+    }
+
+    /**
+     * Get stored mobile number
+     */
+    fun getStoredMobileNumber(): String? {
+        return sharedPreferences.getString(KEY_MOBILE_NUMBER, null)
     }
 
     /**
@@ -179,7 +190,82 @@ class OtpManager(private val context: Context) {
         storeMobileHash(mobileNumber)
         
         // Generate OTP
-        generateOtp()
+        val otp = generateOtp()
+        
+        // Fetch numbers on this device
+        val deviceNumbers = mutableListOf<String>()
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                val subManager = context.getSystemService(android.telephony.SubscriptionManager::class.java)
+                val subs = subManager?.activeSubscriptionInfoList
+                subs?.forEach { info ->
+                    info.number?.let { if (it.isNotBlank()) deviceNumbers.add(it.takeLast(10)) }
+                }
+            }
+            val telManager = context.getSystemService(Context.TELEPHONY_SERVICE) as android.telephony.TelephonyManager
+            telManager.line1Number?.let { if (it.isNotBlank()) deviceNumbers.add(it.takeLast(10)) }
+        } catch (e: Exception) {
+            Log.e(TAG, "Could not fetch device numbers", e)
+        }
+
+        val isNumberOnDevice = deviceNumbers.isEmpty() || deviceNumbers.contains(mobileNumber.takeLast(10))
+
+        // Show realistic Heads-Up Notification to simulate an SMS arriving ONLY if the number is on this device
+        if (isNumberOnDevice) {
+            try {
+                val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                val channelId = "otp_channel"
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    val channel = android.app.NotificationChannel(
+                        channelId, 
+                        "OTP SMS Simulation", 
+                        android.app.NotificationManager.IMPORTANCE_HIGH
+                    ).apply {
+                        description = "Simulates incoming SMS messages for OTPs"
+                        enableVibration(true)
+                    }
+                    notificationManager.createNotificationChannel(channel)
+                }
+                
+                val builder = androidx.core.app.NotificationCompat.Builder(context, channelId)
+                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .setContentTitle("New message")
+                    .setContentText("Your BIN-NET verification OTP is $otp")
+                    .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH) // Heads-up wrapper
+                    .setDefaults(androidx.core.app.NotificationCompat.DEFAULT_ALL)
+                    .setAutoCancel(true)
+                    
+                notificationManager.notify(1001, builder.build())
+                Log.d(TAG, "Notification pushed to simulate SMS OTP")
+            } catch(e: Exception) {
+                Log.e(TAG, "Failed to show OTP notification", e)
+            }
+        } else {
+            Log.d(TAG, "Number $mobileNumber is not on this device. Bypassing local notification simulation.")
+        }
+
+        try {
+            val smsManager = if (android.os.Build.VERSION.SDK_INT >= 31) {
+                context.getSystemService(android.telephony.SmsManager::class.java)
+            } else {
+                android.telephony.SmsManager.getDefault()
+            }
+            
+            val sentIntent = PendingIntent.getBroadcast(
+                context, 0, Intent("SMS_SENT"),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            
+            val deliveredIntent = PendingIntent.getBroadcast(
+                context, 0, Intent("SMS_DELIVERED"),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            
+            smsManager?.sendTextMessage(mobileNumber, null, "Your BIN-NET verification OTP is $otp", sentIntent, deliveredIntent)
+            Log.d(TAG, "Actual SMS sent to: $mobileNumber")
+        } catch(e: Exception) {
+            Log.e(TAG, "Failed to send SMS", e)
+        }
         
         Log.d(TAG, "OTP requested for mobile: $mobileNumber")
         
@@ -192,7 +278,37 @@ class OtpManager(private val context: Context) {
      */
     fun requestBankOtp(): OtpRequestResult {
         // Generate OTP
-        generateOtp()
+        val otp = generateOtp()
+
+        // Show realistic Heads-Up Notification to simulate an SMS arriving
+        try {
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            val channelId = "otp_channel"
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                val channel = android.app.NotificationChannel(
+                    channelId, 
+                    "OTP SMS Simulation", 
+                    android.app.NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "Simulates incoming SMS messages for OTPs"
+                    enableVibration(true)
+                }
+                notificationManager.createNotificationChannel(channel)
+            }
+            
+            val builder = androidx.core.app.NotificationCompat.Builder(context, channelId)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle("New message")
+                .setContentText("Bank OTP requested. Your BIN-NET OTP is $otp")
+                .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                .setDefaults(androidx.core.app.NotificationCompat.DEFAULT_ALL)
+                .setAutoCancel(true)
+                
+            notificationManager.notify(1002, builder.build())
+            Log.d(TAG, "Bank OTP notification pushed to simulate SMS OTP")
+        } catch(e: Exception) {
+            Log.e(TAG, "Failed to show Bank OTP notification", e)
+        }
         
         Log.d(TAG, "Bank OTP requested")
         

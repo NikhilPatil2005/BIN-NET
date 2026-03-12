@@ -153,7 +153,7 @@ fun NumericKeypad(
             KeypadButton(
                 text = "",
                 onClick = onDeleteClick,
-                enabled = enabled && pinLength > 0,
+                enabled = enabled,
                 isIcon = true,
                 iconRes = "backspace"
             )
@@ -215,5 +215,3 @@ private fun KeypadButton(
     }
 }
 
-private val pinLength: Int
-    get() = 0 // Placeholder - will be passed from parent

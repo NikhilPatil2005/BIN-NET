@@ -12,10 +12,12 @@ import com.binnet.app.login.screens.PinSetupScreen
 import com.binnet.app.ui.screens.BalanceDetailScreen
 import com.binnet.app.ui.screens.BankSelectionScreen
 import com.binnet.app.ui.screens.DashboardScreen
+import com.binnet.app.ui.screens.PayContactScreen
 import com.binnet.app.ui.screens.SuccessScreen
+import com.binnet.app.login.screens.OnboardingScreen
 
 @Composable
-fun BINNETNavigation() {
+fun BINNETNavigation(startDestination: String = Screen.Onboarding.route) {
     val navController = rememberNavController()
     
     // Get context from the navigation composable
@@ -28,21 +30,28 @@ fun BINNETNavigation() {
 
     NavHost(
         navController = navController,
-        startDestination = Screen.Login.route
+        startDestination = startDestination
     ) {
+        composable(Screen.Onboarding.route) {
+            OnboardingScreen(
+                onNavigateToPinSetup = {
+                    navController.navigate(Screen.Login.route) {
+                        popUpTo(Screen.Onboarding.route) { inclusive = true }
+                    }
+                },
+                onNavigateToDashboard = {
+                    navController.navigate(Screen.Dashboard.route) {
+                        popUpTo(Screen.Onboarding.route) { inclusive = true }
+                    }
+                }
+            )
+        }
+
         composable(Screen.Login.route) {
             PinSetupScreen(
                 onLoginSuccess = {
-                    // After PIN is verified, check if bank is linked
-                    if (bankPreferencesManager.isBankLinked()) {
-                        navController.navigate(Screen.Dashboard.route) {
-                            popUpTo(Screen.Login.route) { inclusive = true }
-                        }
-                    } else {
-                        // Navigate to bank selection first
-                        navController.navigate(Screen.BankSelection.route) {
-                            popUpTo(Screen.Login.route) { inclusive = true }
-                        }
+                    navController.navigate(Screen.Dashboard.route) {
+                        popUpTo(Screen.Login.route) { inclusive = true }
                     }
                 }
             )
@@ -69,6 +78,9 @@ fun BINNETNavigation() {
             DashboardScreen(
                 onCheckBalanceClick = {
                     navController.navigate(Screen.BalanceDetail.route)
+                },
+                onPayContactsClick = {
+                    navController.navigate(Screen.PayContact.route)
                 },
                 onLinkBankClick = {
                     navController.navigate(Screen.BankSelection.route)
@@ -109,14 +121,23 @@ fun BINNETNavigation() {
         composable(Screen.QRCode.route) {
             DashboardScreen()
         }
+        composable(Screen.PayContact.route) {
+            PayContactScreen(
+                onBackClick = {
+                    navController.popBackStack()
+                }
+            )
+        }
     }
 }
 
 sealed class Screen(val route: String) {
+    data object Onboarding : Screen("onboarding")
     data object Login : Screen("login")
     data object BankSelection : Screen("bank_selection")
     data object Dashboard : Screen("dashboard")
     data object BalanceDetail : Screen("balance_detail")
+    data object PayContact : Screen("pay_contact")
     data object Success : Screen("success")
     data object Payment : Screen("payment")
     data object History : Screen("history")

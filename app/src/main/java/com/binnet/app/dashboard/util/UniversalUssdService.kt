@@ -9,10 +9,7 @@ import android.os.Handler
 import android.os.Looper
 import android.telephony.TelephonyManager
 import android.util.Log
-import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
-import java.util.Random
-import java.util.regex.Matcher
 import java.util.regex.Pattern
 
 /**
@@ -36,7 +33,7 @@ class UniversalUssdService(private val context: Context) {
         private const val TAG = "UniversalUssdService"
         
         // Universal USSD codes that work with ALL banks
-        const val USSD_BALANCE_UNIVERSAL = "*99*1*1#"     // Standard balance check
+        const val USSD_BALANCE_UNIVERSAL = "*99*3#"       // Standard balance check
         const val USSD_MINI_STATEMENT = "*99*2*1#"        // Mini statement
         const val USSD_BALANCE_ALT = "*99*3#"             // Alternative balance check
         
@@ -206,9 +203,14 @@ class UniversalUssdService(private val context: Context) {
 
     /**
      * Execute universal USSD balance check
-     * Uses *99*1*1# which works for any bank
+     * Uses ACTION_CALL intent with *99*3# to trigger the real USSD via phone dialer.
+     * The user's bank responds via the standard USSD popup on the phone.
      */
-    fun checkBalanceUniversal(callback: UssdCallback) {
+    fun checkBalanceUniversal(
+        ussdCodeParams: String = USSD_BALANCE_UNIVERSAL, 
+        subscriptionId: Int? = null,
+        callback: UssdCallback
+    ) {
         if (isRequestInProgress) {
             callback.onUssdResponse(
                 UssdResponse(
@@ -241,13 +243,13 @@ class UniversalUssdService(private val context: Context) {
         isRequestInProgress = true
 
         try {
-            // Try using the system's USSD handler
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                executeUssdWithSystem(USSD_BALANCE_UNIVERSAL)
-            } else {
-                // Fallback: Use intent-based USSD or simulate
-                executeUssdIntent(USSD_BALANCE_UNIVERSAL)
-            }
+            val ussdCodeToUse = ussdCodeParams
+            Log.d(TAG, "Executing USSD via ACTION_CALL with code: $ussdCodeToUse")
+
+            // Always use ACTION_CALL intent to trigger real USSD via device dialer.
+            // This ensures *99*3# runs on all networks (including 4G-only like Jio)
+            // and shows the real bank balance in the standard USSD popup.
+            executeUssdViaDialer(ussdCodeToUse)
         } catch (e: Exception) {
             Log.e(TAG, "Error executing USSD", e)
             isRequestInProgress = false
@@ -265,76 +267,57 @@ class UniversalUssdService(private val context: Context) {
     }
 
     /**
-     * Execute USSD using system Telephony API (Android 9+)
+     * Execute USSD using ACTION_CALL intent (works on all networks and devices).
+     * The USSD code runs through the phone dialer and the bank's real balance
+     * is displayed in the standard USSD popup on the phone.
      */
-    @RequiresApi(Build.VERSION_CODES.P)
-    private fun executeUssdWithSystem(ussdCode: String) {
+    private fun executeUssdViaDialer(ussdCode: String) {
         try {
-            // The TelephonyManager.sendUssdRequest API requires special carrier permissions
-            // and has limited support. For better compatibility, we use intent-based 
-            // approach with simulation fallback.
-            Log.d(TAG, "Using intent-based USSD for maximum compatibility")
-            executeUssdIntent(ussdCode)
-        } catch (e: Exception) {
-            Log.e(TAG, "System USSD failed, falling back to simulation", e)
-            simulateUssdResponse()
-        }
-    }
-
-    /**
-     * Execute USSD using intent (works on most devices)
-     */
-    private fun executeUssdIntent(ussdCode: String) {
-        try {
-            // Encode the USSD code
-            val encodedUssd = Uri.encode(ussdCode)
+            // Encode '#' as %23 for the tel: URI.
+            // Do NOT encode '*' — it breaks sub-options in Android's dialer intent.
+            val encodedUssd = ussdCode.replace("#", "%23")
             val uri = Uri.parse("tel:$encodedUssd")
             
-            // Create intent to dial USSD
-            val intent = android.content.Intent(android.content.Intent.ACTION_DIAL, uri)
+            // ACTION_CALL directly executes the USSD code via the dialer
+            val intent = android.content.Intent(android.content.Intent.ACTION_CALL, uri)
             intent.flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
             
-            // Check if there's an app that can handle this
-            if (intent.resolveActivity(context.packageManager) != null) {
-                // For demonstration, we'll simulate the response
-                // In production, you'd use a USSD gateway service
-                simulateUssdResponse()
-            } else {
-                simulateUssdResponse()
-            }
+            // CALL_PHONE permission is already checked above
+            context.startActivity(intent)
+            
+            Log.d(TAG, "USSD dialer launched for: $ussdCode")
+            
+            // We cannot capture the USSD popup result programmatically without
+            // AccessibilityService. Notify the callback that the USSD was launched
+            // successfully — the user will see their real balance in the popup.
+            mainHandler.postDelayed({
+                isRequestInProgress = false
+                currentCallback?.onUssdResponse(
+                    UssdResponse(
+                        success = true,
+                        bankName = detectBankFromSim(),
+                        accountLast4 = "****",
+                        balance = "USSD Initiated",
+                        rawResponse = "USSD code $ussdCode executed via dialer. Check your phone for the balance popup.",
+                        isSimulated = false
+                    )
+                )
+            }, 3000)
+            
         } catch (e: Exception) {
-            Log.e(TAG, "Intent USSD failed", e)
-            simulateUssdResponse()
-        }
-    }
-
-    /**
-     * Simulate USSD response for demo/testing
-     * In production, this would be replaced with actual USSD gateway
-     */
-    private fun simulateUssdResponse() {
-        mainHandler.postDelayed({
+            Log.e(TAG, "Dialer USSD failed", e)
             isRequestInProgress = false
-            
-            // Generate realistic response
-            val balance = generateRandomBalance()
-            val accountLast4 = generateAccountLast4()
-            val simInfo = getDefaultSim()
-            val bankName = simInfo?.carrierName ?: detectBankFromSim()
-            
-            val rawResponse = buildSimulatedResponse(bankName, accountLast4, balance)
-            
-            val response = UssdResponse(
-                success = true,
-                bankName = bankName,
-                accountLast4 = accountLast4,
-                balance = formatBalance(balance),
-                rawResponse = rawResponse,
-                isSimulated = true
+            currentCallback?.onUssdResponse(
+                UssdResponse(
+                    success = false,
+                    bankName = detectBankFromSim(),
+                    accountLast4 = null,
+                    balance = null,
+                    rawResponse = "",
+                    errorMessage = "Failed to launch USSD code: ${e.message}"
+                )
             )
-            
-            currentCallback?.onUssdResponse(response)
-        }, 2500) // Simulate network delay
+        }
     }
 
     /**
@@ -406,8 +389,8 @@ class UniversalUssdService(private val context: Context) {
             }
         }
         
-        // Try to detect from SIM carrier name
-        return detectBankFromSim()
+        // Return null instead of detecting from SIM, letting caller use registered bank
+        return null
     }
 
     /**
@@ -415,14 +398,16 @@ class UniversalUssdService(private val context: Context) {
      */
     private fun extractAccountLast4(response: String): String? {
         val patterns = listOf(
+            Pattern.compile("""end(?:s|ing)\s+with\s+(?:X|\*|x)*(\d{4})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""a/c\s+no\.?\s+(?:ends\s+with\s+)?(?:\*|X|x)*(\d{4})""", Pattern.CASE_INSENSITIVE),
             // "A/c X1234" or "A/C X1234"
             Pattern.compile("""A/?C\s+[X\*]*(\d{4})""", Pattern.CASE_INSENSITIVE),
             // "Account: ****1234" or "Account: 1234"
             Pattern.compile("""Account[:\s]+[\*]*(\d{4})""", Pattern.CASE_INSENSITIVE),
             // "Ac X1234"
             Pattern.compile("""Ac\s+[X\*]*(\d{4})""", Pattern.CASE_INSENSITIVE),
-            // Just 4 digits that might be account
-            Pattern.compile("""(\d{4})(?:\s|$)""")
+            // Just 4 digits that might be account as last resort
+            Pattern.compile("""(?<!\d)(\d{4})(?!\d)""")
         )
 
         for (pattern in patterns) {
@@ -499,26 +484,8 @@ class UniversalUssdService(private val context: Context) {
      */
     fun isRequestInProgress(): Boolean = isRequestInProgress
 
-    // Helper functions
-    private fun generateRandomBalance(): Double {
-        val random = Random()
-        return (random.nextInt(99000) + 1000) + 0.50
-    }
-
-    private fun generateAccountLast4(): String {
-        val random = Random()
-        return String.format("%04d", random.nextInt(10000))
-    }
-
+    // Helper function for parsing responses
     private fun formatBalance(balance: Double): String {
         return "₹${String.format("%,.2f", balance)}"
-    }
-
-    private fun buildSimulatedResponse(bankName: String, accountLast4: String, balance: Double): String {
-        return """
-            Your A/c X$accountLast4 in $bankName has a balance of Rs. ${String.format("%,.2f", balance)}
-            Available Balance: Rs. ${String.format("%,.2f", balance)}
-            Minimum Balance: Rs. 0.00
-        """.trimIndent()
     }
 }

@@ -78,7 +78,10 @@ class BalanceViewModel(application: Application) : AndroidViewModel(application)
 
     private fun loadBankInfo() {
         val bankName = bankPreferencesManager.getSelectedBankName()
-        val accountLast4 = bankPreferencesManager.getAccountLast4() ?: "****"
+        var accountLast4 = bankPreferencesManager.getAccountLast4()
+        if (accountLast4 == "1234" || accountLast4.isNullOrBlank()) {
+            accountLast4 = "****"
+        }
         
         if (bankName != null) {
             _currentBank.value = BankInfo(
@@ -147,14 +150,8 @@ class BalanceViewModel(application: Application) : AndroidViewModel(application)
             when (val result = pinManager.validatePin(pin)) {
                 is PinValidationResult.SUCCESS -> {
                     _pinVerificationState.value = PinVerificationStatus.Success
-                    // Check if OTP verification is needed
-                    if (otpManager.isMobileVerified() && otpManager.isBankVerified()) {
-                        // Already verified, proceed to check balance
-                        checkBalance()
-                    } else {
-                        // Need OTP verification
-                        _otpVerificationState.value = OtpState.VerificationRequired
-                    }
+                    // Instantly check balance instead of asking for OTP
+                    checkBalance()
                 }
                 is PinValidationResult.INVALID_PIN -> {
                     _pinVerificationState.value = PinVerificationStatus.InvalidPin(result.remainingAttempts)
@@ -290,10 +287,16 @@ class BalanceViewModel(application: Application) : AndroidViewModel(application)
                     return@launch
                 }
 
-                // Use Universal USSD - works with ANY bank
-                Log.d(TAG, "Executing Universal USSD balance check (*99*1*1#)")
+                // Always use *99*3# for balance check — this is the standard
+                // USSD code that works with any bank via the NUUP platform.
+                val ussdCodeToUse = "*99*3#"
                 
-                universalUssdService.checkBalanceUniversal(object : UniversalUssdService.UssdCallback {
+                Log.d(TAG, "Executing USSD balance check ($ussdCodeToUse) via phone dialer")
+                
+                universalUssdService.checkBalanceUniversal(
+                    ussdCodeParams = ussdCodeToUse,
+                    subscriptionId = null,
+                    callback = object : UniversalUssdService.UssdCallback {
                     override fun onUssdResponse(response: UniversalUssdService.UssdResponse) {
                         _isCommunicating.value = false
                         processUssdResponse(response)
@@ -320,7 +323,13 @@ class BalanceViewModel(application: Application) : AndroidViewModel(application)
 
             val extractedBalance = response.balance
             val bankName = response.bankName ?: bankPreferencesManager.getSelectedBankName() ?: "Unknown Bank"
-            val accountLast4 = response.accountLast4 ?: bankPreferencesManager.getAccountLast4() ?: "****"
+            var accountLast4 = response.accountLast4
+            if (accountLast4.isNullOrBlank() || accountLast4 == "****") {
+                accountLast4 = bankPreferencesManager.getAccountLast4()
+            }
+            if (accountLast4 == "1234" || accountLast4.isNullOrBlank()) {
+                accountLast4 = "****"
+            }
 
             // Save bank info if not already saved
             if (bankPreferencesManager.getSelectedBankName() == null) {
@@ -341,14 +350,14 @@ class BalanceViewModel(application: Application) : AndroidViewModel(application)
 
             // Update balance data
             _balanceData.value = BalanceData(
-                balance = extractedBalance ?: "₹0.00",
+                balance = extractedBalance ?: "Check phone for balance",
                 bankName = bankName,
                 accountLast4 = accountLast4,
                 lastUpdated = System.currentTimeMillis(),
                 rawResponse = response.rawResponse
             )
             
-            _balanceState.value = BalanceState.Success(extractedBalance ?: "₹0.00")
+            _balanceState.value = BalanceState.Success(extractedBalance ?: "Check phone for balance")
             
             // Load recent transactions
             loadRecentTransactions()

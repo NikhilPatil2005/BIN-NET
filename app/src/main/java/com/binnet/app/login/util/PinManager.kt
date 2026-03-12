@@ -22,6 +22,8 @@ class PinManager(private val context: Context) {
         private const val KEY_IS_PIN_SET = "is_pin_set"
         private const val KEY_FAILED_ATTEMPTS = "failed_attempts"
         private const val KEY_LOCKOUT_TIME = "lockout_time"
+        private const val KEY_AUTH_MODE = "auth_mode"
+        private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
         private const val MAX_FAILED_ATTEMPTS = 5
         private const val LOCKOUT_DURATION_MS = 30000L // 30 seconds
     }
@@ -157,6 +159,33 @@ class PinManager(private val context: Context) {
             .putLong(KEY_LOCKOUT_TIME, System.currentTimeMillis())
             .apply()
     }
+
+    fun setAuthMode(mode: AuthMode) {
+        sharedPreferences.edit().putString(KEY_AUTH_MODE, mode.name).apply()
+    }
+
+    fun getAuthMode(): AuthMode {
+        val modeStr = sharedPreferences.getString(KEY_AUTH_MODE, AuthMode.NONE.name)
+        return try {
+            AuthMode.valueOf(modeStr ?: AuthMode.NONE.name)
+        } catch (e: Exception) {
+            AuthMode.NONE
+        }
+    }
+
+    fun setOnboardingCompleted(completed: Boolean) {
+        sharedPreferences.edit().putBoolean(KEY_ONBOARDING_COMPLETED, completed).apply()
+    }
+
+    fun isOnboardingCompleted(): Boolean {
+        return sharedPreferences.getBoolean(KEY_ONBOARDING_COMPLETED, false)
+    }
+}
+
+enum class AuthMode {
+    APP_PIN,
+    DEVICE_LOCK,
+    NONE
 }
 
 /**

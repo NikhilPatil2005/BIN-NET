@@ -114,9 +114,6 @@ fun BalanceDetailScreen(
     var showPinSheet by remember { mutableStateOf(false) }
     var enteredPin by remember { mutableStateOf("") }
     var showPin by remember { mutableStateOf(false) }
-    var showOtpSheet by remember { mutableStateOf(false) }
-    var enteredOtp by remember { mutableStateOf("") }
-    var currentStep by remember { mutableIntStateOf(0) } // 0 = PIN, 1 = Mobile OTP, 2 = Bank OTP
 
     // Permission launcher
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -127,15 +124,9 @@ fun BalanceDetailScreen(
 
     // Use rememberCoroutineScope for sheet state to prevent crashes
     val pinSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val otpSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    // Navigate to success screen after balance check succeeds
-    LaunchedEffect(balanceState) {
-        if (balanceState is BalanceState.Success) {
-            kotlinx.coroutines.delay(500)
-            onBalanceSuccess()
-        }
-    }
+    // No auto-navigation: balance is shown in the phone's USSD popup,
+    // not in-app. The user can dismiss the balance detail screen manually.
 
     // Handle PIN success
     LaunchedEffect(pinVerificationState) {
@@ -143,41 +134,10 @@ fun BalanceDetailScreen(
             showPinSheet = false
             enteredPin = ""
             viewModel.resetPinVerification()
-            
-            // Check if OTP is needed
-            when (val otp = otpState) {
-                is OtpState.VerificationRequired -> {
-                    showOtpSheet = true
-                    currentStep = 1 // Start with mobile OTP
-                }
-                is OtpState.Verified -> {
-                    // Already verified, balance check will proceed automatically
-                }
-                else -> {
-                    showOtpSheet = true
-                    currentStep = 1
-                }
-            }
         }
     }
 
-    // Handle OTP state changes
-    LaunchedEffect(otpState) {
-        when (otpState) {
-            is OtpState.Verified -> {
-                showOtpSheet = false
-                enteredOtp = ""
-                viewModel.resetOtpVerification()
-            }
-            is OtpState.Error -> {
-                // Stay on OTP sheet, show error
-            }
-            is OtpState.InvalidOtp -> {
-                // Stay on OTP sheet, show error
-            }
-            else -> {}
-        }
-    }
+    // Permission status response handling overlay UI block
 
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
@@ -332,35 +292,7 @@ fun BalanceDetailScreen(
         }
     }
 
-    // OTP Verification Sheet
-    if (showOtpSheet) {
-        ModalBottomSheet(
-            onDismissRequest = { 
-                showOtpSheet = false
-                enteredOtp = ""
-                viewModel.resetOtpVerification()
-            },
-            sheetState = otpSheetState
-        ) {
-            OtpVerificationContent(
-                otpState = otpState,
-                currentStep = currentStep,
-                mobileNumber = mobileNumber,
-                onRequestMobileOtp = { viewModel.requestMobileOtp() },
-                onRequestBankOtp = { viewModel.requestBankOtp() },
-                enteredOtp = enteredOtp,
-                onOtpChange = { enteredOtp = it },
-                onVerifyOtp = { viewModel.verifyOtp(enteredOtp) },
-                onSkip = { viewModel.skipOtpVerification() },
-                onDismiss = { 
-                    showOtpSheet = false
-                    enteredOtp = ""
-                    viewModel.resetOtpVerification()
-                },
-                onStepChange = { currentStep = it }
-            )
-        }
-    }
+
 }
 
 /**
@@ -607,19 +539,31 @@ private fun BalanceDisplayCard(
                 is BalanceState.Loading -> {
                     CircularProgressIndicator(modifier = Modifier.size(48.dp), color = MaterialTheme.colorScheme.primary)
                     Spacer(modifier = Modifier.height(16.dp))
-                    Text(text = "Communicating with your Bank's server...", style = MaterialTheme.typography.bodyLarge, color = Color.Gray)
-                    Text(text = "Please wait", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text(text = "Launching USSD *99*3# via your phone dialer...", style = MaterialTheme.typography.bodyLarge, color = Color.Gray)
+                    Text(text = "Your balance will appear in the USSD popup", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 }
                 is BalanceState.Success -> {
-                    Text(text = "Available Balance", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = Color(0xFF4CAF50),
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(text = "USSD Code Executed", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = balanceState.balance,
-                        style = MaterialTheme.typography.displayMedium.copy(fontSize = 50.sp, fontWeight = FontWeight.Bold),
+                        text = "*99*3# Triggered Successfully",
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                         color = Color(0xFF4CAF50)
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(text = "Updated just now", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text(
+                        text = "Check your phone\u2019s USSD popup for your real bank balance",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.Gray,
+                        textAlign = TextAlign.Center
+                    )
                     Spacer(modifier = Modifier.height(16.dp))
                     OutlinedButton(onClick = onRefresh, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
                         Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -774,350 +718,10 @@ private fun PinVerificationContent(
             } else {
                 Text("Verify & Check Balance")
             }
-        }
+        }   
         Spacer(modifier = Modifier.height(12.dp))
         TextButton(onClick = onDismiss) { Text("Cancel") }
         Spacer(modifier = Modifier.height(24.dp))
-    }
-}
-
-@Composable
-private fun OtpVerificationContent(
-    otpState: OtpState,
-    currentStep: Int,
-    mobileNumber: String?,
-    onRequestMobileOtp: () -> Unit,
-    onRequestBankOtp: () -> Unit,
-    enteredOtp: String,
-    onOtpChange: (String) -> Unit,
-    onVerifyOtp: () -> Unit,
-    onSkip: () -> Unit,
-    onDismiss: () -> Unit,
-    onStepChange: (Int) -> Unit
-) {
-    Column(modifier = Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        // Step indicator
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Center
-        ) {
-            StepIndicator(
-                step = 1,
-                label = "Mobile",
-                isActive = currentStep == 1,
-                isCompleted = currentStep > 1
-            )
-            Spacer(modifier = Modifier.width(16.dp))
-            StepIndicator(
-                step = 2,
-                label = "Bank",
-                isActive = currentStep == 2,
-                isCompleted = currentStep > 2
-            )
-        }
-        
-        Spacer(modifier = Modifier.height(24.dp))
-
-        when (currentStep) {
-            1 -> {
-                // Mobile OTP Step
-                Text(text = "Verify Mobile Number", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
-                
-                val displayNumber = mobileNumber?.let { 
-                    if (it.length > 4) "XXXXXX${it.takeLast(4)}" else it 
-                } ?: "your mobile number"
-                
-                Text(
-                    text = "OTP will be sent to $displayNumber",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.Gray,
-                    textAlign = TextAlign.Center
-                )
-                
-                Spacer(modifier = Modifier.height(24.dp))
-                
-                when (otpState) {
-                    is OtpState.SendingOtp -> {
-                        CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(text = "Sending OTP...", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
-                    }
-                    is OtpState.OtpSent -> {
-                        // Show message and demo OTP
-                        Text(text = otpState.message, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF4CAF50))
-                        
-                        // Show demo OTP prominently if available
-                        otpState.demoOtp?.let { demoOtp ->
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9)),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(16.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Text(
-                                        text = "DEMO OTP",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = Color(0xFF43A047)
-                                    )
-                                    Text(
-                                        text = demoOtp,
-                                        style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
-                                        color = Color(0xFF2E7D32),
-                                        letterSpacing = 8.sp
-                                    )
-                                    Text(
-                                        text = "Enter this OTP to verify",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = Color(0xFF43A047)
-                                    )
-                                }
-                            }
-                        }
-                        
-                        Spacer(modifier = Modifier.height(16.dp))
-                        
-                        OutlinedTextField(
-                            value = enteredOtp,
-                            onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) onOtpChange(it) },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Enter 6-digit OTP") },
-                            placeholder = { Text("------") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done)
-                        )
-                        
-                        when (otpState) {
-                            is OtpState.InvalidOtp -> {
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(text = otpState.message, style = MaterialTheme.typography.bodySmall, color = Color(0xFFE53935))
-                            }
-                            is OtpState.Error -> {
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(text = otpState.message, style = MaterialTheme.typography.bodySmall, color = Color(0xFFE53935))
-                            }
-                            else -> {}
-                        }
-                        
-                        Spacer(modifier = Modifier.height(24.dp))
-                        
-                        Button(
-                            onClick = onVerifyOtp,
-                            modifier = Modifier.fillMaxWidth().height(50.dp),
-                            enabled = enteredOtp.length == 6 && otpState !is OtpState.Verifying,
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            if (otpState is OtpState.Verifying) {
-                                CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.White, strokeWidth = 2.dp)
-                            } else {
-                                Text("Verify OTP")
-                            }
-                        }
-                        
-                        Spacer(modifier = Modifier.height(12.dp))
-                        
-                        OutlinedButton(
-                            onClick = { 
-                                onStepChange(2)
-                                onRequestBankOtp()
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text("Skip & Verify Bank Instead")
-                        }
-                    }
-                    else -> {
-                        Button(
-                            onClick = onRequestMobileOtp,
-                            modifier = Modifier.fillMaxWidth().height(50.dp),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text("Send OTP to Mobile")
-                        }
-                    }
-                }
-            }
-            2 -> {
-                // Bank OTP Step
-                Text(text = "Verify Bank Account", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "OTP will be sent to your bank's registered mobile number",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.Gray,
-                    textAlign = TextAlign.Center
-                )
-                
-                Spacer(modifier = Modifier.height(24.dp))
-                
-                when (otpState) {
-                    is OtpState.SendingOtp -> {
-                        CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(text = "Sending OTP...", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
-                    }
-                    is OtpState.OtpSent -> {
-                        // Show message and demo OTP
-                        Text(text = otpState.message, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF4CAF50))
-                        
-                        // Show demo OTP prominently if available
-                        otpState.demoOtp?.let { demoOtp ->
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9)),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(16.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Text(
-                                        text = "DEMO OTP",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = Color(0xFF43A047)
-                                    )
-                                    Text(
-                                        text = demoOtp,
-                                        style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
-                                        color = Color(0xFF2E7D32),
-                                        letterSpacing = 8.sp
-                                    )
-                                    Text(
-                                        text = "Enter this OTP to verify",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = Color(0xFF43A047)
-                                    )
-                                }
-                            }
-                        }
-                        
-                        Spacer(modifier = Modifier.height(16.dp))
-                        
-                        OutlinedTextField(
-                            value = enteredOtp,
-                            onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) onOtpChange(it) },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Enter 6-digit OTP") },
-                            placeholder = { Text("------") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done)
-                        )
-                        
-                        when (otpState) {
-                            is OtpState.InvalidOtp -> {
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(text = otpState.message, style = MaterialTheme.typography.bodySmall, color = Color(0xFFE53935))
-                            }
-                            is OtpState.Error -> {
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(text = otpState.message, style = MaterialTheme.typography.bodySmall, color = Color(0xFFE53935))
-                            }
-                            else -> {}
-                        }
-                        
-                        Spacer(modifier = Modifier.height(24.dp))
-                        
-                        Button(
-                            onClick = onVerifyOtp,
-                            modifier = Modifier.fillMaxWidth().height(50.dp),
-                            enabled = enteredOtp.length == 6 && otpState !is OtpState.Verifying,
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            if (otpState is OtpState.Verifying) {
-                                CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.White, strokeWidth = 2.dp)
-                            } else {
-                                Text("Verify Bank OTP")
-                            }
-                        }
-                        
-                        Spacer(modifier = Modifier.height(12.dp))
-                        
-                        OutlinedButton(
-                            onClick = onSkip,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text("Skip (Demo Mode)")
-                        }
-                    }
-                    else -> {
-                        Button(
-                            onClick = onRequestBankOtp,
-                            modifier = Modifier.fillMaxWidth().height(50.dp),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text("Send OTP to Bank")
-                        }
-                    }
-                }
-            }
-        }
-        
-        Spacer(modifier = Modifier.height(12.dp))
-        TextButton(onClick = onDismiss) { Text("Cancel") }
-        Spacer(modifier = Modifier.height(24.dp))
-    }
-}
-
-@Composable
-private fun StepIndicator(
-    step: Int,
-    label: String,
-    isActive: Boolean,
-    isCompleted: Boolean
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(
-                when {
-                    isCompleted -> Color(0xFF4CAF50).copy(alpha = 0.1f)
-                    isActive -> MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
-                    else -> Color.Gray.copy(alpha = 0.1f)
-                }
-            )
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .size(32.dp)
-                .clip(CircleShape)
-                .background(
-                    when {
-                        isCompleted -> Color(0xFF4CAF50)
-                        isActive -> MaterialTheme.colorScheme.primary
-                        else -> Color.Gray
-                    }
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            if (isCompleted) {
-                Icon(
-                    imageVector = Icons.Default.CheckCircle,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp)
-                )
-            } else {
-                Text(
-                    text = step.toString(),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = if (isActive || isCompleted) MaterialTheme.colorScheme.primary else Color.Gray
-        )
     }
 }
 

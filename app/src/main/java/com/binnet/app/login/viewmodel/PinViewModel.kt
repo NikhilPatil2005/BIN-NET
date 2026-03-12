@@ -4,6 +4,8 @@ import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.binnet.app.login.util.OtpManager
+import com.binnet.app.login.util.OtpVerificationResult
 import com.binnet.app.login.util.PinManager
 import com.binnet.app.login.util.PinValidationResult
 import com.binnet.app.login.util.SimCardManager
@@ -17,7 +19,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * PinViewModel - ViewModel for Login Module
- * Handles PIN setup, validation, and SIM card detection
+ * Handles PIN setup, validation, Mobile Verification and SIM card detection
  * 
  * Fixed: Safe initialization to prevent crashes during ViewModel creation
  */
@@ -25,6 +27,7 @@ class PinViewModel(application: Application) : AndroidViewModel(application) {
 
     private val pinManager = PinManager(application)
     private val simCardManager = SimCardManager(application)
+    private val otpManager = OtpManager(application)
 
     companion object {
         private const val TAG = "PinViewModel"
@@ -40,6 +43,13 @@ class PinViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _confirmPin = MutableStateFlow("")
     val confirmPin: StateFlow<String> = _confirmPin.asStateFlow()
+
+    // Mobile Verification state
+    private val _mobileNumber = MutableStateFlow("")
+    val mobileNumber: StateFlow<String> = _mobileNumber.asStateFlow()
+
+    private val _otp = MutableStateFlow("")
+    val otp: StateFlow<String> = _otp.asStateFlow()
 
     // Error messages
     private val _errorMessage = MutableStateFlow<String?>(null)
@@ -62,29 +72,6 @@ class PinViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Determines the initial UI state based on SIM and PIN status
-     */
-    private fun determineInitialState(simStatus: SimCardStatus): LoginUiState {
-        return when {
-            !simCardManager.hasPhoneStatePermission() -> {
-                LoginUiState.PermissionRequired
-            }
-            simStatus is SimCardStatus.NOT_AVAILABLE || simStatus is SimCardStatus.ERROR -> {
-                LoginUiState.SimNotAvailable
-            }
-            simStatus is SimCardStatus.PERMISSION_REQUIRED -> {
-                LoginUiState.PermissionRequired
-            }
-            !pinManager.isPinSet() -> {
-                LoginUiState.PinSetup
-            }
-            else -> {
-                LoginUiState.PinEntry
-            }
-        }
-    }
-
-    /**
      * Check initial state - whether PIN is set and SIM is available
      */
     fun checkInitialState() {
@@ -95,22 +82,156 @@ class PinViewModel(application: Application) : AndroidViewModel(application) {
             val simStatus = simCardManager.getSimCardStatus()
             _simCardStatus.value = simStatus
 
-            // Determine initial state based on PIN and SIM
+            // Determine initial state based on PIN, SIM, and OTP verification
+            val authMode = pinManager.getAuthMode()
             when {
-                !simCardManager.hasPhoneStatePermission() -> {
-                    _uiState.value = LoginUiState.PermissionRequired
+                authMode == com.binnet.app.login.util.AuthMode.DEVICE_LOCK -> {
+                    _uiState.value = LoginUiState.DeviceLockPrompt
                 }
-                simStatus is SimCardStatus.NOT_AVAILABLE || simStatus is SimCardStatus.ERROR -> {
-                    _uiState.value = LoginUiState.SimNotAvailable
-                }
-                !pinManager.isPinSet() -> {
+                authMode == com.binnet.app.login.util.AuthMode.APP_PIN && !pinManager.isPinSet() -> {
                     _uiState.value = LoginUiState.PinSetup
                 }
+                authMode == com.binnet.app.login.util.AuthMode.APP_PIN -> {
+                    _uiState.value = LoginUiState.PinEntry
+                }
                 else -> {
+                    _uiState.value = LoginUiState.PinSetup
+                }
+            }
+        }
+    }
+
+
+
+    /**
+     * Update OTP input
+     */
+    fun updateOtp(digit: String) {
+        if (_otp.value.length < 6) {
+            _otp.value += digit
+            _errorMessage.value = null
+            
+            // Auto-validate when 6 digits entered
+            if (_otp.value.length == 6) {
+                if (_uiState.value is LoginUiState.ForgotPinOtpEntry) {
+                    verifyForgotPinOtp()
+                }
+            }
+        }
+    }
+
+    /**
+     * Delete last OTP digit
+     */
+    fun deleteOtpDigit() {
+        if (_otp.value.isNotEmpty()) {
+            _otp.value = _otp.value.dropLast(1)
+            _errorMessage.value = null
+        }
+    }
+
+
+
+    /**
+     * Initiate Forgot PIN flow
+     */
+    fun initiateForgotPin() {
+        val mobile = otpManager.getStoredMobileNumber()
+        if (mobile != null) {
+            viewModelScope.launch {
+                _uiState.value = LoginUiState.Loading
+                otpManager.requestMobileOtp(mobile)
+                _otp.value = ""
+                _pin.value = ""
+                _confirmPin.value = ""
+                _uiState.value = LoginUiState.ForgotPinOtpEntry("OTP sent to $mobile to reset your PIN")
+            }
+        } else {
+            // fallback if somehow mobile number is not saved
+            _errorMessage.value = "Registered mobile number not found. Please verify again."
+            _uiState.value = LoginUiState.PinEntry
+        }
+    }
+
+    /**
+     * Verify the entered forgot PIN OTP
+     */
+    fun verifyForgotPinOtp() {
+        if (_otp.value.length != 6) {
+            _errorMessage.value = "Enter a 6-digit OTP"
+            return
+        }
+        
+        viewModelScope.launch {
+            _uiState.value = LoginUiState.Loading
+            when(val result = otpManager.verifyOtp(_otp.value)) {
+                is OtpVerificationResult.SUCCESS -> {
+                    _uiState.value = LoginUiState.ForgotPinNewPin
+                }
+                is OtpVerificationResult.INVALID -> {
+                    _errorMessage.value = "Invalid OTP. Please try again."
+                    _otp.value = ""
+                    val mobile = otpManager.getStoredMobileNumber() ?: ""
+                    _uiState.value = LoginUiState.ForgotPinOtpEntry("OTP sent to $mobile to reset your PIN")
+                }
+                is OtpVerificationResult.EXPIRED -> {
+                    _errorMessage.value = "OTP Expired. Please request a new one."
+                    _otp.value = ""
                     _uiState.value = LoginUiState.PinEntry
                 }
             }
         }
+    }
+
+    /**
+     * Proceed from Forgot PIN New PIN to confirm PIN
+     */
+    fun proceedToForgotPinConfirm() {
+        if (_pin.value.length == 4) {
+            _uiState.value = LoginUiState.ForgotPinConfirmPin
+        } else {
+            _errorMessage.value = "Please enter a 4-digit PIN"
+        }
+    }
+
+    /**
+     * Proceed to final confirmation
+     */
+    fun proceedToForgotPinFinalConfirm() {
+        if (_pin.value.length != 4 || _confirmPin.value.length != 4) {
+            _errorMessage.value = "Please complete PIN entry"
+            return
+        }
+        if (_pin.value != _confirmPin.value) {
+            _errorMessage.value = "PINs do not match"
+            _confirmPin.value = ""
+            return
+        }
+        _uiState.value = LoginUiState.ForgotPinFinalConfirm
+    }
+
+    /**
+     * Complete Forgot PIN flow
+     */
+    fun completeForgotPin() {
+        viewModelScope.launch {
+            val success = pinManager.setPin(_pin.value)
+            if (success) {
+                _uiState.value = LoginUiState.Success
+            } else {
+                _errorMessage.value = "Failed to save new PIN. Please try again."
+            }
+        }
+    }
+
+    /**
+     * Cancel Forgot PIN flow
+     */
+    fun cancelForgotPin() {
+        _pin.value = ""
+        _confirmPin.value = ""
+        _otp.value = ""
+        _uiState.value = LoginUiState.PinEntry
     }
 
     /**
@@ -250,18 +371,12 @@ class PinViewModel(application: Application) : AndroidViewModel(application) {
         return false
     }
 
-    /**
-     * Permission granted callback
-     */
-    fun onPermissionGranted() {
-        checkInitialState()
+    fun onDeviceLockSuccess() {
+        _uiState.value = LoginUiState.Success
     }
 
-    /**
-     * Permission denied callback
-     */
-    fun onPermissionDenied() {
-        _uiState.value = LoginUiState.PermissionRequired
+    fun setErrorMessage(msg: String) {
+        _errorMessage.value = msg
     }
 }
 
@@ -270,11 +385,14 @@ class PinViewModel(application: Application) : AndroidViewModel(application) {
  */
 sealed class LoginUiState {
     data object Loading : LoginUiState()
-    data object PermissionRequired : LoginUiState()
-    data object SimNotAvailable : LoginUiState()
+    data object DeviceLockPrompt : LoginUiState()
     data object PinSetup : LoginUiState()
     data object PinConfirm : LoginUiState()
     data object PinEntry : LoginUiState()
+    data class ForgotPinOtpEntry(val message: String) : LoginUiState()
+    data object ForgotPinNewPin : LoginUiState()
+    data object ForgotPinConfirmPin : LoginUiState()
+    data object ForgotPinFinalConfirm : LoginUiState()
     data object Success : LoginUiState()
     data class Error(val message: String) : LoginUiState()
 }

@@ -28,7 +28,7 @@ class SimCardManager(private val context: Context) {
     }
 
     fun getSimCardStatus(): SimCardStatus {
-        if (!hasPhoneStatePermission()) {
+        if (!hasRequiredPermissions()) {
             return SimCardStatus.PERMISSION_REQUIRED
         }
 
@@ -70,7 +70,7 @@ class SimCardManager(private val context: Context) {
     fun getAvailableSimCards(): List<SimCardInfo> {
         val simCards = mutableListOf<SimCardInfo>()
         
-        if (!hasPhoneStatePermission()) {
+        if (!hasRequiredPermissions()) {
             return simCards
         }
 
@@ -134,15 +134,22 @@ class SimCardManager(private val context: Context) {
         return getAvailableSimCards().find { it.subscriptionId == subscriptionId }
     }
 
-    fun hasPhoneStatePermission(): Boolean {
-        return ContextCompat.checkSelfPermission(
+    fun hasRequiredPermissions(): Boolean {
+        val phoneState = ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.READ_PHONE_STATE
         ) == PackageManager.PERMISSION_GRANTED
+        
+        val sendSms = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.SEND_SMS
+        ) == PackageManager.PERMISSION_GRANTED
+        
+        return phoneState && sendSms
     }
 
     fun getPhoneNumber(): String? {
-        if (!hasPhoneStatePermission()) return null
+        if (!hasRequiredPermissions()) return null
 
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -156,7 +163,7 @@ class SimCardManager(private val context: Context) {
     }
 
     fun getSimSubscriberId(): String? {
-        if (!hasPhoneStatePermission()) return null
+        if (!hasRequiredPermissions()) return null
 
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

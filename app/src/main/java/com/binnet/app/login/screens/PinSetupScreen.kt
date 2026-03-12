@@ -68,23 +68,7 @@ fun PinSetupScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Permission launcher
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            viewModel.onPermissionGranted()
-        } else {
-            viewModel.onPermissionDenied()
-        }
-    }
 
-    // Request permission when in permission required state
-    LaunchedEffect(uiState) {
-        if (uiState is LoginUiState.PermissionRequired) {
-            permissionLauncher.launch(Manifest.permission.READ_PHONE_STATE)
-        }
-    }
 
     // Show error messages
     LaunchedEffect(errorMessage) {
@@ -116,16 +100,11 @@ fun PinSetupScreen(
                     LoadingContent()
                 }
 
-                is LoginUiState.PermissionRequired -> {
-                    PermissionRequiredContent(
-                        onRequestPermission = {
-                            permissionLauncher.launch(Manifest.permission.READ_PHONE_STATE)
-                        }
+                is LoginUiState.DeviceLockPrompt -> {
+                    DeviceLockPromptContent(
+                        onSuccess = { viewModel.onDeviceLockSuccess() },
+                        onError = { viewModel.setErrorMessage("Device lock authentication failed or unavailable.") }
                     )
-                }
-
-                is LoginUiState.SimNotAvailable -> {
-                    SimNotAvailableContent(simCardStatus)
                 }
 
                 is LoginUiState.PinSetup -> {
@@ -152,7 +131,49 @@ fun PinSetupScreen(
                     PinEntryContent(
                         pin = pin,
                         onPinDigitClick = { viewModel.updatePin(it) },
-                        onPinDeleteClick = { viewModel.deletePinDigit() }
+                        onPinDeleteClick = { viewModel.deletePinDigit() },
+                        onForgotPinClick = { viewModel.initiateForgotPin() }
+                    )
+                }
+
+                is LoginUiState.ForgotPinOtpEntry -> {
+                    ForgotPinOtpEntryContent(
+                        otp = viewModel.otp.collectAsState().value,
+                        message = (uiState as LoginUiState.ForgotPinOtpEntry).message,
+                        onOtpDigitClick = { viewModel.updateOtp(it) },
+                        onOtpDeleteClick = { viewModel.deleteOtpDigit() },
+                        onCancelClick = { viewModel.cancelForgotPin() }
+                    )
+                }
+
+                is LoginUiState.ForgotPinNewPin -> {
+                    PinSetupContent(
+                        pin = pin,
+                        title = "Set New PIN",
+                        subtitle = "Create a new 4-digit PIN",
+                        onPinDigitClick = { viewModel.updatePin(it) },
+                        onPinDeleteClick = { viewModel.deletePinDigit() },
+                        onNextClick = { viewModel.proceedToForgotPinConfirm() }
+                    )
+                }
+
+                is LoginUiState.ForgotPinConfirmPin -> {
+                    PinConfirmContent(
+                        pin = pin,
+                        confirmPin = confirmPin,
+                        title = "Confirm New PIN",
+                        subtitle = "Re-enter your new PIN to confirm",
+                        onConfirmPinDigitClick = { viewModel.updateConfirmPin(it) },
+                        onConfirmPinDeleteClick = { viewModel.deleteConfirmPinDigit() },
+                        onBackClick = { viewModel.cancelForgotPin() },
+                        onConfirmClick = { viewModel.proceedToForgotPinFinalConfirm() }
+                    )
+                }
+
+                is LoginUiState.ForgotPinFinalConfirm -> {
+                    ForgotPinFinalConfirmContent(
+                        onConfirmClick = { viewModel.completeForgotPin() },
+                        onCancelClick = { viewModel.cancelForgotPin() }
                     )
                 }
 
@@ -190,93 +211,45 @@ private fun LoadingContent() {
 }
 
 @Composable
-private fun PermissionRequiredContent(
-    onRequestPermission: () -> Unit
+private fun DeviceLockPromptContent(
+    onSuccess: () -> Unit,
+    onError: () -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Icon(
-            imageVector = Icons.Default.Lock,
-            contentDescription = null,
-            modifier = Modifier.size(80.dp),
-            tint = MaterialTheme.colorScheme.primary
-        )
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Text(
-            text = stringResource(R.string.sim_required_message),
-            style = MaterialTheme.typography.bodyLarge,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onBackground
-        )
-
-        Spacer(modifier = Modifier.height(32.dp))
-
-        Button(
-            onClick = onRequestPermission,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.primary
-            )
-        ) {
-            Text("Grant Permission")
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val keyguardManager = context.getSystemService(android.app.KeyguardManager::class.java)
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            onSuccess()
+        } else {
+            onError()
         }
     }
-}
 
-@Composable
-private fun SimNotAvailableContent(simCardStatus: SimCardStatus?) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Icon(
-            imageVector = Icons.Default.Warning,
-            contentDescription = null,
-            modifier = Modifier.size(80.dp),
-            tint = MaterialTheme.colorScheme.error
-        )
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Text(
-            text = stringResource(R.string.sim_not_available),
-            style = MaterialTheme.typography.headlineMedium,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.error
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Text(
-            text = stringResource(R.string.sim_required_message),
-            style = MaterialTheme.typography.bodyLarge,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onBackground
-        )
-
-        if (simCardStatus is SimCardStatus.AVAILABLE) {
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "Detected: ${simCardStatus.operatorName} (${simCardStatus.operatorCode})",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
-            )
+    LaunchedEffect(Unit) {
+        if (keyguardManager?.isDeviceSecure == true) {
+            val intent = keyguardManager.createConfirmDeviceCredentialIntent("Unlock BIN-NET", "Confirm your screen lock to access the app.")
+            if (intent != null) {
+                launcher.launch(intent)
+            } else {
+                onError()
+            }
+        } else {
+            onError()
         }
+    }
+    
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
     }
 }
 
 @Composable
 private fun PinSetupContent(
     pin: String,
+    title: String = stringResource(R.string.setup_pin_title),
+    subtitle: String = stringResource(R.string.setup_pin_subtitle),
     onPinDigitClick: (String) -> Unit,
     onPinDeleteClick: () -> Unit,
     onNextClick: () -> Unit
@@ -290,7 +263,7 @@ private fun PinSetupContent(
         Spacer(modifier = Modifier.height(48.dp))
 
         Text(
-            text = stringResource(R.string.setup_pin_title),
+            text = title,
             style = MaterialTheme.typography.headlineLarge,
             color = MaterialTheme.colorScheme.onBackground
         )
@@ -298,7 +271,7 @@ private fun PinSetupContent(
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = stringResource(R.string.setup_pin_subtitle),
+            text = subtitle,
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
             textAlign = TextAlign.Center
@@ -346,6 +319,8 @@ private fun PinSetupContent(
 private fun PinConfirmContent(
     pin: String,
     confirmPin: String,
+    title: String = stringResource(R.string.confirm_pin_title),
+    subtitle: String = stringResource(R.string.confirm_pin_subtitle),
     onConfirmPinDigitClick: (String) -> Unit,
     onConfirmPinDeleteClick: () -> Unit,
     onBackClick: () -> Unit,
@@ -360,7 +335,7 @@ private fun PinConfirmContent(
         Spacer(modifier = Modifier.height(48.dp))
 
         Text(
-            text = stringResource(R.string.confirm_pin_title),
+            text = title,
             style = MaterialTheme.typography.headlineLarge,
             color = MaterialTheme.colorScheme.onBackground
         )
@@ -368,7 +343,7 @@ private fun PinConfirmContent(
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = stringResource(R.string.confirm_pin_subtitle),
+            text = subtitle,
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
             textAlign = TextAlign.Center
@@ -434,7 +409,8 @@ private fun PinConfirmContent(
 private fun PinEntryContent(
     pin: String,
     onPinDigitClick: (String) -> Unit,
-    onPinDeleteClick: () -> Unit
+    onPinDeleteClick: () -> Unit,
+    onForgotPinClick: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -474,6 +450,18 @@ private fun PinEntryContent(
             showBiometric = false,
             enabled = true
         )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        androidx.compose.material3.TextButton(
+            onClick = onForgotPinClick
+        ) {
+            Text(
+                text = "Forgot PIN?",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
 
         Spacer(modifier = Modifier.height(24.dp))
     }
@@ -531,3 +519,148 @@ private fun ErrorContent(message: String) {
         )
     }
 }
+
+
+
+@Composable
+private fun ForgotPinOtpEntryContent(
+    otp: String,
+    message: String,
+    onOtpDigitClick: (String) -> Unit,
+    onOtpDeleteClick: () -> Unit,
+    onCancelClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Spacer(modifier = Modifier.height(48.dp))
+
+        Text(
+            text = "Reset PIN",
+            style = MaterialTheme.typography.headlineLarge,
+            color = MaterialTheme.colorScheme.onBackground
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+            textAlign = TextAlign.Center
+        )
+
+        Spacer(modifier = Modifier.height(48.dp))
+
+        PinDots(
+            pinLength = otp.length,
+            maxLength = 6
+        )
+
+        Spacer(modifier = Modifier.weight(1f))
+
+        NumericKeypad(
+            onDigitClick = onOtpDigitClick,
+            onDeleteClick = onOtpDeleteClick,
+            enabled = true
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(
+            onClick = onCancelClick,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.primary
+            )
+        ) {
+            Text(
+                text = "Cancel",
+                style = MaterialTheme.typography.titleMedium
+            )
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun ForgotPinFinalConfirmContent(
+    onConfirmClick: () -> Unit,
+    onCancelClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = Icons.Default.Warning,
+            contentDescription = null,
+            modifier = Modifier.size(80.dp),
+            tint = MaterialTheme.colorScheme.primary
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Text(
+            text = "Change PIN?",
+            style = MaterialTheme.typography.headlineLarge,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onBackground
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(
+            text = "Are you sure you want to change your PIN? You will need to use this new PIN for future logins.",
+            style = MaterialTheme.typography.bodyLarge,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
+        )
+
+        Spacer(modifier = Modifier.height(48.dp))
+
+        Button(
+            onClick = onConfirmClick,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.primary
+            )
+        ) {
+            Text(
+                text = "Yes, Change PIN",
+                style = MaterialTheme.typography.titleMedium
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(
+            onClick = onCancelClick,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.primary
+            )
+        ) {
+            Text(
+                text = "Cancel",
+                style = MaterialTheme.typography.titleMedium
+            )
+        }
+    }
+}
+
