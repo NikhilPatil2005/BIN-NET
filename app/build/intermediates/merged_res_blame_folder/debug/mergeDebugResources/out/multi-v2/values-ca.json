@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.binnet.app-mergeDebugResources-59:/values-ca/values-ca.xml",
+            "outputFile": "com.binnet.app-mergeDebugResources-60:/values-ca/values-ca.xml",
             "map": [
                 {
                     "source": "C:\\Users\\HP\\.gradle\\caches\\transforms-3\\748cf68807ae79ea25612ffdcc6e0b2f\\transformed\\core-1.12.0\\res\\values-ca\\values-ca.xml",
@@ -86,6 +86,23 @@
                         "startOffsets": "105,228,333,440,523,629,755,839,918,1009,1102,1195,1290,1388,1481,1574,1668,1759,1850,1931,2042,2150,2248,2358,2463,2571,2731,10663",
                         "endColumns": "122,104,106,82,105,125,83,78,90,92,92,94,97,92,92,93,90,90,80,110,107,97,109,104,107,159,98,81",
                         "endOffsets": "223,328,435,518,624,750,834,913,1004,1097,1190,1285,1383,1476,1569,1663,1754,1845,1926,2037,2145,2243,2353,2458,2566,2726,2825,10740"
+                    }
+                },
+                {
+                    "source": "C:\\Users\\HP\\.gradle\\caches\\transforms-3\\8ddfab05dead0845839ae39afbbfc76a\\transformed\\zxing-android-embedded-4.3.0\\res\\values-ca\\values-ca.xml",
+                    "from": {
+                        "startLines": "2,3,4,5",
+                        "startColumns": "4,4,4,4",
+                        "startOffsets": "55,114,167,323",
+                        "endColumns": "58,52,155,112",
+                        "endOffsets": "109,162,318,431"
+                    },
+                    "to": {
+                        "startLines": "122,123,124,125",
+                        "startColumns": "4,4,4,4",
+                        "startOffsets": "12733,12792,12845,13001",
+                        "endColumns": "58,52,155,112",
+                        "endOffsets": "12787,12840,12996,13109"
                     }
                 }
             ]

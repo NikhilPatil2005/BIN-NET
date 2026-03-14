@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.binnet.app-mergeDebugResources-59:/values-en-rGB/values-en-rGB.xml",
+            "outputFile": "com.binnet.app-mergeDebugResources-60:/values-en-rGB/values-en-rGB.xml",
             "map": [
                 {
                     "source": "C:\\Users\\HP\\.gradle\\caches\\transforms-3\\11af7f60dffc261e8b7f06e3589e4383\\transformed\\appcompat-1.2.0\\res\\values-en-rGB\\values-en-rGB.xml",

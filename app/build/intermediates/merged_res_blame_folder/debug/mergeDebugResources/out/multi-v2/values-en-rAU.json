@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.binnet.app-mergeDebugResources-59:/values-en-rAU/values-en-rAU.xml",
+            "outputFile": "com.binnet.app-mergeDebugResources-60:/values-en-rAU/values-en-rAU.xml",
             "map": [
                 {
                     "source": "C:\\Users\\HP\\.gradle\\caches\\transforms-3\\46c80a6435262c37d8a5802765c30039\\transformed\\material3-1.1.2\\res\\values-en-rAU\\values-en-rAU.xml",

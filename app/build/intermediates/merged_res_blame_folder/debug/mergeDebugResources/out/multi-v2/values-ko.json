@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.binnet.app-mergeDebugResources-59:/values-ko/values-ko.xml",
+            "outputFile": "com.binnet.app-mergeDebugResources-60:/values-ko/values-ko.xml",
             "map": [
                 {
                     "source": "C:\\Users\\HP\\.gradle\\caches\\transforms-3\\b760799acf403efca631ed6371c08ffc\\transformed\\biometric-1.1.0\\res\\values-ko\\values-ko.xml",
@@ -35,6 +35,23 @@
                         "startOffsets": "3765,3844,7201,7375,7535,8780,8855,8934,9013,9092,9156,9220,9293,9527,9865,9939,10003",
                         "endColumns": "78,75,87,89,79,74,78,78,78,63,63,72,75,67,73,63,113",
                         "endOffsets": "3839,3915,7284,7460,7610,8850,8929,9008,9087,9151,9215,9288,9364,9590,9934,9998,10112"
+                    }
+                },
+                {
+                    "source": "C:\\Users\\HP\\.gradle\\caches\\transforms-3\\8ddfab05dead0845839ae39afbbfc76a\\transformed\\zxing-android-embedded-4.3.0\\res\\values-ko\\values-ko.xml",
+                    "from": {
+                        "startLines": "2,3,4,5",
+                        "startColumns": "4,4,4,4",
+                        "startOffsets": "55,106,153,260",
+                        "endColumns": "50,46,106,71",
+                        "endOffsets": "101,148,255,327"
+                    },
+                    "to": {
+                        "startLines": "122,123,124,125",
+                        "startColumns": "4,4,4,4",
+                        "startOffsets": "11359,11410,11457,11564",
+                        "endColumns": "50,46,106,71",
+                        "endOffsets": "11405,11452,11559,11631"
                     }
                 },
                 {

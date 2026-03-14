@@ -1,8 +1,25 @@
 {
     "logs": [
         {
-            "outputFile": "com.binnet.app-mergeDebugResources-59:/values-zh-rCN/values-zh-rCN.xml",
+            "outputFile": "com.binnet.app-mergeDebugResources-60:/values-zh-rCN/values-zh-rCN.xml",
             "map": [
+                {
+                    "source": "C:\\Users\\HP\\.gradle\\caches\\transforms-3\\8ddfab05dead0845839ae39afbbfc76a\\transformed\\zxing-android-embedded-4.3.0\\res\\values-zh-rCN\\values-zh-rCN.xml",
+                    "from": {
+                        "startLines": "2,3,4,5",
+                        "startColumns": "4,4,4,4",
+                        "startOffsets": "55,104,151,238",
+                        "endColumns": "48,46,86,68",
+                        "endOffsets": "99,146,233,302"
+                    },
+                    "to": {
+                        "startLines": "122,123,124,125",
+                        "startColumns": "4,4,4,4",
+                        "startOffsets": "11100,11149,11196,11283",
+                        "endColumns": "48,46,86,68",
+                        "endOffsets": "11144,11191,11278,11347"
+                    }
+                },
                 {
                     "source": "C:\\Users\\HP\\.gradle\\caches\\transforms-3\\46c80a6435262c37d8a5802765c30039\\transformed\\material3-1.1.2\\res\\values-zh-rCN\\values-zh-rCN.xml",
                     "from": {

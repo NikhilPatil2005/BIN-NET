@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
@@ -80,6 +81,17 @@ import com.binnet.app.dashboard.viewmodel.BalanceCheckStatus
 import com.binnet.app.dashboard.viewmodel.DashboardViewModel
 import com.binnet.app.dashboard.viewmodel.VolteStatus
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
+import androidx.compose.material3.AlertDialog
+import androidx.compose.runtime.rememberCoroutineScope
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -111,6 +123,39 @@ fun DashboardScreen(
     var showPermissionRationale by remember { mutableStateOf(false) }
     
     var debouncedQuery by remember { mutableStateOf("") }
+    
+    val scope = rememberCoroutineScope()
+    var scannedResult by remember { mutableStateOf<String?>(null) }
+    var scannedType by remember { mutableStateOf<String?>(null) } // "UPI" or "Mobile"
+    var showScanDialog by remember { mutableStateOf(false) }
+
+    val scanLauncher = rememberLauncherForActivityResult(
+        contract = ScanContract()
+    ) { result ->
+        if (result.contents != null) {
+            val content = result.contents
+            if (content.startsWith("upi://pay")) {
+                val uri = Uri.parse(content)
+                val pa = uri.getQueryParameter("pa")
+                if (pa != null) {
+                    scannedResult = pa
+                    scannedType = "UPI"
+                    showScanDialog = true
+                } else {
+                    Toast.makeText(context, "Invalid UPI QR Code", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                val cleanNumber = content.replace(Regex("[^0-9]"), "")
+                if (cleanNumber.length >= 10) {
+                    scannedResult = if (cleanNumber.length > 10) cleanNumber.takeLast(10) else cleanNumber
+                    scannedType = "Mobile"
+                    showScanDialog = true
+                } else {
+                    Toast.makeText(context, "No valid number found in QR", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
     
     LaunchedEffect(searchQuery) {
         delay(300)
@@ -219,6 +264,14 @@ fun DashboardScreen(
             MainActionsGrid(
                 onScanQRClick = {
                     viewModel.onScanQRClick()
+                    val options = ScanOptions()
+                    options.setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                    options.setPrompt("Scan a QR code to Pay")
+                    options.setCameraId(0) // Use a specific camera of the device
+                    options.setBeepEnabled(true)
+                    options.setBarcodeImageEnabled(true)
+                    options.setOrientationLocked(false)
+                    scanLauncher.launch(options)
                     onScanQRClick()
                 },
                 onPayContactsClick = {
@@ -259,6 +312,103 @@ fun DashboardScreen(
                 balanceStatus = balanceStatus
             )
         }
+    }
+
+    if (showScanDialog && scannedResult != null && scannedType != null) {
+        val result = scannedResult!!
+        val type = scannedType!!
+        AlertDialog(
+            onDismissRequest = { showScanDialog = false },
+            title = {
+                Text(
+                    text = "Pay via QR ($type)",
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        text = if (type == "UPI") "UPI ID found. USSD *99*1*3# will open." else "Mobile Number found. USSD *99*1*1# will open.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "Enter this in the USSD popup:",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = result,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "(Copied to clipboard)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showScanDialog = false
+                        try {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            val clip = ClipData.newPlainText(type, result)
+                            clipboard.setPrimaryClip(clip)
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                        
+                        val ussdCode = if (type == "UPI") "*99*1*3%23" else "*99*1*1%23"
+                        val uri = Uri.parse("tel:$ussdCode")
+                        try {
+                            val intent = Intent(Intent.ACTION_CALL, uri)
+                            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Call permission required", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Call,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Launch USSD")
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = { showScanDialog = false }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 

@@ -89,4 +89,7 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+
+    // ZXing for QR Scanning
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 }
